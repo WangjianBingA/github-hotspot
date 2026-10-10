@@ -6,8 +6,16 @@
 // 实测：markitdown 是微软的项目，而 registry.npmjs.org/markitdown 是个 2013 年的
 // 第三方包（作者 Ben Taber，且它连 repository 字段都没有）；搜 npm 的 markitdown
 // 还会撞上 dead8309/markitdown-ts。所以：
-//   · repoMatches 只能由 packument 的 repository 归一化后与目标仓库 owner/repo 比较得出；
-//     包名相同**不是**证据，缺 repository / 解析不出 owner/repo 一律 false；
+//   · repoMatches 只能由包自己声明的仓库字段归一化后与目标 owner/repo **严格相等**得出，
+//     包名相同**不是**证据；一个字段都取不到证据时一律 false；
+//   · R42 多来源取证：真实包经常只在某一处写仓库地址（有的只在包级写 repository，
+//     有的只写 bugs.url = https://github.com/owner/repo/issues）。所以只要
+//     版本级 repository、包级 repository、版本级 bugs.url、版本级 homepage、包级 homepage
+//     中**任一**条能归一化到目标 owner/repo，就认定归属成立，并用 `evidence` 说明凭的是哪一条；
+//     homepage 只有在指向目标仓库路径内时才算证据（纯文档站如 https://opencode.ai
+//     归一化后是空串，自然不算）。这套机制的强度边界要说清楚：这些字段都是发布者自己写在
+//     package.json 里的**声明**，它证明的是"这个包明确宣称自己来自该仓库"，
+//     不是密码学意义上的作者身份证明——所以判定必须严格相等，绝不允许"看起来像"。
 //   · 一次请求就够：版本对象同时带 bin（能不能 npx 直接跑）与 os（支不支持 Windows）；
 //   · requires_python 缺失（null）表示"不挑版本"，视为兼容；
 //   · 任何异常、null 响应体、结构不对的响应一律返回 null，永不抛错——
@@ -119,12 +127,50 @@ const latestManifest = (packument) => {
 };
 
 /**
+ * bugs 字段可以写成字符串，也可以写成 { url, email }：统一取 URL，取不到返回空串。
+ * @param {*} bugs 版本对象的 bugs 字段
+ * @returns {string}
+ */
+const bugsUrl = (bugs) => {
+  if (typeof bugs === 'string') return bugs;
+  if (bugs && typeof bugs === 'object' && typeof bugs.url === 'string') return bugs.url;
+  return '';
+};
+
+/**
+ * R42 多来源取证：按优先级找出**第一条**能归一化到目标仓库的证据，返回它的来源名。
+ * 顺序：版本级 repository → 包级 repository → 版本级 bugs.url → 版本级 homepage → 包级 homepage。
+ * 判定仍然是严格相等（归一化后必须一模一样），包名在任何情况下都不参与。
+ * homepage 不需要额外特判：它只有指向目标仓库路径内时才会归一化成目标，
+ * 纯文档站（https://opencode.ai）归一化后是空串，永远不可能相等。
+ * 一条证据都没有时返回 'none'——宁可不给安装命令，也不靠"看起来像"。
+ * @param {object} packument npm packument（顶层也可能带 repository / homepage）
+ * @param {object} manifest dist-tags.latest 对应的版本对象
+ * @param {string} target 归一化后的目标仓库 owner/repo
+ * @returns {'repository'|'bugs.url'|'homepage'|'none'} 命中的来源名，或 none
+ */
+const findOwnershipEvidence = (packument, manifest, target) => {
+  if (target === '') return 'none';
+  const candidates = [
+    ['repository', manifest?.repository],
+    ['repository', packument?.repository],
+    ['bugs.url', bugsUrl(manifest?.bugs)],
+    ['homepage', manifest?.homepage],
+    ['homepage', packument?.homepage]
+  ];
+  for (const [source, value] of candidates) {
+    if (normalizeRepoUrl(value) === target) return source;
+  }
+  return 'none';
+};
+
+/**
  * 直查 npm registry，给出"这个包是不是目标仓库发布的、能不能 npx 跑、支不支持 Windows"。
  * @param {object} client 注入的网络客户端（形如 createClient 的返回值）
  * @param {string} packageName npm 包名，如 'opencode-ai' 或 '@scope/name'
  * @param {string} repoFullName 目标仓库的 owner/repo（来自 GitHub，不是来自包名）
- * @returns {Promise<{packageName: string, version: string, hasBin: boolean, osIncludesWin: boolean, repoMatches: boolean}|null>}
- *          查询失败或响应结构不对时为 null
+ * @returns {Promise<{packageName: string, version: string, hasBin: boolean, osIncludesWin: boolean, repoMatches: boolean, evidence: string}|null>}
+ *          查询失败或响应结构不对时为 null；evidence 说明 repoMatches 凭什么成立（R42）
  */
 export async function lookupNpm(client, packageName, repoFullName) {
   try {
@@ -140,7 +186,7 @@ export async function lookupNpm(client, packageName, repoFullName) {
     if (found === null) return null;
 
     const target = normalizeRepoUrl(repoFullName);
-    const actual = normalizeRepoUrl(found.manifest.repository);
+    const evidence = findOwnershipEvidence(body, found.manifest, target);
 
     return {
       // 以 registry 自己报的包名为准（拿不到就回落到请求时用的名字）。
@@ -148,8 +194,9 @@ export async function lookupNpm(client, packageName, repoFullName) {
       version: found.version,
       hasBin: hasBin(found.manifest.bin),
       osIncludesWin: osIncludesWin(found.manifest.os),
-      // 名字相同不算证据，只有归一化后的仓库地址相等才算。
-      repoMatches: target !== '' && actual !== '' && target === actual
+      // 名字相同不算证据：只有某条声明字段归一化后与目标仓库严格相等才算（R42 多来源）。
+      repoMatches: evidence !== 'none',
+      evidence
     };
   } catch {
     return null;
@@ -255,8 +302,13 @@ const satisfies = (local, { op, major, minor }) => {
 /**
  * 判断本机 Python 是否满足包声明的 requires_python。
  * 逗号分隔的多条件是 AND 关系，必须全部满足。
- * 拿不准时一律判**不兼容**：读不懂的约束（~= 等）或读不懂的本机版本都不放行——
- * 宁可少给初学者一条安装命令，也不能给出一条装不上、或者装出问题的命令。
+ *
+ * **这是有意的失败关闭（fail-closed，R44 已批准）**：读不懂的约束（`~=3.10` 这类简报未列出的
+ * 运算符）或读不懂的本机版本一律判**不兼容**。两类错误的代价不对称：
+ * 误判"兼容"会让初学者照着一条装不上、或装出问题的命令折腾半天（还可能是我们唯一给出的路径）；
+ * 误判"不兼容"只是让他少看到一条安装路径（其余路径与"未知"状态照旧）。
+ * 代价说清楚：**不认识的约束会偏保守**——将来若支持更多运算（`~=`、`===`），
+ * 要连同它的语义一起补测试，而不是把"读不懂"改成"放行"。
  * @param {string|null|undefined} requiresPython PyPI 的 requires_python 原文
  * @param {string} localPython 本机 Python 版本，如 '3.10.11'
  * @returns {boolean} 兼容为 true；null / 空串表示"不挑版本"，同样为 true

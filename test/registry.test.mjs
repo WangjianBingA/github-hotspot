@@ -141,7 +141,7 @@ test('未加 scope 的包名请求 registry 的裸路径，且不吃 GitHub 额�
   const spy = spying({ name:'markitdown', 'dist-tags':{latest:'0.1.8'}, versions:{ '0.1.8':{ repository:{ url:'https://github.com/microsoft/markitdown' } } } });
   const r = await lookupNpm(spy, 'markitdown', 'microsoft/markitdown');
   assert.deepEqual(spy.calls, [{ url: 'https://registry.npmjs.org/markitdown', options: { api: 'none' } }]);
-  assert.deepEqual(r, { packageName:'markitdown', version:'0.1.8', hasBin:false, osIncludesWin:true, repoMatches:true });
+  assert.deepEqual(r, { packageName:'markitdown', version:'0.1.8', hasBin:false, osIncludesWin:true, repoMatches:true, evidence:'repository' });
 });
 
 test('scoped 包名（@scope/name）按未编码斜杠请求 registry', async () => {
@@ -151,7 +151,96 @@ test('scoped 包名（@scope/name）按未编码斜杠请求 registry', async ()
   const r = await lookupNpm(spy, '@sst/opencode', 'sst/opencode');
   assert.equal(spy.calls[0].url, 'https://registry.npmjs.org/@sst/opencode');
   assert.equal(spy.calls[0].options.api, 'none');
-  assert.deepEqual(r, { packageName:'@sst/opencode', version:'1.0.0', hasBin:true, osIncludesWin:true, repoMatches:true });
+  assert.deepEqual(r, { packageName:'@sst/opencode', version:'1.0.0', hasBin:true, osIncludesWin:true, repoMatches:true, evidence:'repository' });
+});
+
+// ---------- R42：多来源取证（扩大归属证据，但绝不退化成信包名） ----------
+
+test('R42：包级 repository（版本级没写）同样算归属证据', async () => {
+  const packument = { name:'opencode-ai', 'dist-tags':{latest:'1.18.35'},
+    repository:{ type:'git', url:'git+https://github.com/sst/opencode.git' },
+    versions:{ '1.18.35':{ bin:{ opencode:'bin/opencode.exe' } } } };
+  const r = await lookupNpm(client(packument), 'opencode-ai', 'sst/opencode');
+  assert.equal(r.repoMatches, true);
+  assert.equal(r.evidence, 'repository');
+});
+
+test('R42：repository 缺失时 bugs.url 命中即算归属成立', async () => {
+  const mk = (bugs) => ({ name:'x', 'dist-tags':{latest:'1.0.0'}, versions:{ '1.0.0':{ bugs } } });
+  // 对象形式（真实包里绝大多数是这种）与字符串形式都要认。
+  const asObject = await lookupNpm(client(mk({ url:'https://github.com/sst/opencode/issues' })), 'x', 'sst/opencode');
+  assert.equal(asObject.repoMatches, true);
+  assert.equal(asObject.evidence, 'bugs.url');
+  assert.equal((await lookupNpm(client(mk('https://github.com/sst/opencode/issues')), 'x', 'sst/opencode')).evidence, 'bugs.url');
+  // 指向别人的 issue 区不是证据。
+  assert.equal((await lookupNpm(client(mk({ url:'https://github.com/dead8309/markitdown-ts/issues' })), 'x', 'sst/opencode')).evidence, 'none');
+  assert.equal((await lookupNpm(client(mk({ email:'dev@example.com' })), 'x', 'sst/opencode')).evidence, 'none');
+});
+
+test('R42：homepage 只在指向目标仓库路径内时才算证据，纯文档站不算', async () => {
+  // at = 'version' 表示写在版本对象里，'package' 表示写在 packument 顶层。
+  const mk = (homepage, at) => ({
+    name:'x', 'dist-tags':{latest:'1.0.0'},
+    ...(at === 'package' ? { homepage } : {}),
+    versions:{ '1.0.0': at === 'version' ? { homepage } : {} }
+  });
+
+  for (const at of ['version', 'package']) {
+    for (const hp of ['https://github.com/sst/opencode', 'https://github.com/sst/opencode#readme',
+      'https://github.com/sst/opencode/tree/main/docs', 'https://github.com/SST/OpenCode/']) {
+      const r = await lookupNpm(client(mk(hp, at)), 'x', 'sst/opencode');
+      assert.equal(r.repoMatches, true, `${at}：${hp}`);
+      assert.equal(r.evidence, 'homepage', `${at}：${hp}`);
+    }
+    // 纯文档站（真实例：opencode.ai / vitest.dev）、无关域名、别人的仓库、只有 owner —— 一律不是证据。
+    for (const hp of ['https://opencode.ai', 'https://www.opencode.ai/docs', 'https://vitest.dev',
+      'https://github.com/dead8309/markitdown-ts', 'https://github.com/sst', 'https://gitlab.com/sst/opencode']) {
+      const r = await lookupNpm(client(mk(hp, at)), 'x', 'sst/opencode');
+      assert.equal(r.repoMatches, false, `${at}：${hp}`);
+      assert.equal(r.evidence, 'none', `${at}：${hp}`);
+    }
+  }
+});
+
+test('R42：贴近真实 opencode-ai 的合成 packument（有 bin/os、repository 缺失、bugs.url 命中）', async () => {
+  // 真实 opencode-ai@1.18.35 的 bin/os 就长这样；真实包连 repository/homepage/bugs 都没写
+  // （所以真实查询仍是 repoMatches:false，见报告）。这里用"只写了 bugs.url"的合成夹具钉住行为。
+  const packument = { name:'opencode-ai', 'dist-tags':{latest:'1.18.35'},
+    versions:{ '1.18.35':{ bin:{ opencode:'bin/opencode.exe' }, os:['darwin','linux','win32'],
+      bugs:{ url:'https://github.com/sst/opencode/issues' } } } };
+  const r = await lookupNpm(client(packument), 'opencode-ai', 'sst/opencode');
+  assert.deepEqual(r, { packageName:'opencode-ai', version:'1.18.35', hasBin:true, osIncludesWin:true,
+    repoMatches:true, evidence:'bugs.url' });
+});
+
+test('R42：一个证据字段都没有时 evidence 为 none，绝不靠包名判定', async () => {
+  // 真实 opencode-ai 就是这种：包名与目标仓库"看起来很像"，但没有任何字段能证明归属。
+  const packument = { name:'opencode-ai', 'dist-tags':{latest:'1.18.35'},
+    versions:{ '1.18.35':{ bin:{ opencode:'bin/opencode.exe' }, os:['darwin','linux','win32'] } } };
+  const r = await lookupNpm(client(packument), 'opencode-ai', 'sst/opencode');
+  assert.equal(r.repoMatches, false);
+  assert.equal(r.evidence, 'none');
+});
+
+test('R42：多个来源冲突时任一命中即成立，evidence 报告第一个命中的来源', async () => {
+  // 版本级 repository 指向 fork、bugs.url 指向目标仓库 → 成立，且说清凭的是哪一条。
+  const packument = { name:'x', 'dist-tags':{latest:'1.0.0'},
+    homepage:'https://github.com/sst/opencode',
+    versions:{ '1.0.0':{ repository:{ url:'https://github.com/someone/fork' },
+      bugs:{ url:'https://github.com/sst/opencode/issues' } } } };
+  const r = await lookupNpm(client(packument), 'x', 'sst/opencode');
+  assert.equal(r.repoMatches, true);
+  assert.equal(r.evidence, 'bugs.url');
+
+  // 版本级 repository 命中时优先级最高（真实包绝大多数走这条）。
+  const both = { name:'x', 'dist-tags':{latest:'1.0.0'},
+    homepage:'https://github.com/sst/opencode',
+    versions:{ '1.0.0':{ repository:{ url:'git+https://github.com/sst/opencode.git' },
+      bugs:{ url:'https://github.com/sst/opencode/issues' } } } };
+  assert.equal((await lookupNpm(client(both), 'x', 'sst/opencode')).evidence, 'repository');
+
+  // 目标仓库为空时永远不成立，也不给任何 evidence。
+  assert.equal((await lookupNpm(client(packument), 'x', '')).evidence, 'none');
 });
 
 // ---------- hasBin / osIncludesWin 的判定边界 ----------

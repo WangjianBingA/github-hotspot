@@ -25,8 +25,9 @@
 //   R64 —— hasCjk（有本地化文档，喂评分）与 hasChinese（真有中文，管徽章）是两个不同的断言：
 //          chineseDoc 只认 hasCjk；hasChinese 与 localizedFiles 照实带出去，
 //          只有非中文本地化时界面必须说「有本地化文档（非中文）」，不能说"有中文说明"。
-//   R68 —— npm 与 PyPI 的**归属都是硬前提**。lookupPyPI 目前没有任何归属字段，所以在拿到
-//          repoMatches === true 之前不下发 pip install（宁可不给命令，R45 的方向）。
+//   R68 —— npm 与 PyPI 的**归属都是硬前提**。Task 10B 之后 lookupPyPI 与 lookupNpm 一样返回
+//          repoMatches / evidence（取证来自 PyPI 自己声明的 project_urls / home_page），但硬前置不变：
+//          只有在拿到 repoMatches === true 时才下发 pip install（宁可不给命令，R45 的方向）。
 //   R70/R71/R72 —— 我们不知道的时候，句子的主语必须是**我们自己的查找动作**（或受限于我们给出的东西），
 //          不能是项目的事实、也不能是用户机器的状态：none 档只能说"我们没有找到…"（不能说"这个项目
 //          没有现成的安装方式"）；没有中文时只能说"我们没有查到中文说明"（上游分不清"读过且只有英文"
@@ -61,8 +62,8 @@ const npmEvidence = (npm) => (isNonEmpty(npm.evidence) ? npm.evidence.trim() : '
  *   buildFromSource?: boolean, docker?: boolean }} [input]
  *   releases：fetchLatestRelease 的结果（可能为 null＝没问到），用到 windowsAsset { name, url }；
  *   npm：lookupNpm 的结果，用到 packageName / repoMatches / hasBin / osIncludesWin / evidence；
- *   pypi：lookupPyPI 的结果，用到 packageName / version / requiresPython，以及 Task 10B 会补上的
- *     repoMatches / evidence（PyPI 归属也是硬前提，R68）；
+ *   pypi：lookupPyPI 的结果，用到 packageName / version / requiresPython，以及 Task 10B 已补上的
+ *     repoMatches / evidence（'project_urls' | 'home_page' | 'none'；PyPI 归属也是硬前提，R68）；
  *   chinese：detectChinese 的结果，用到 hasCjk（喂评分）/ hasChinese（徽章）/ localizedFiles
  * @returns {{ kind: string, command: string|null, downloadUrl: string|null, evidence: string|null,
  *   verified: boolean, difficulty: 'green'|'yellow'|'red', chineseDoc: boolean, hasChinese: boolean,
@@ -143,12 +144,11 @@ export function classifyRunnability(input = {}) {
     notes.push('我们查不到这个包有没有可以直接运行的程序入口，所以不敢把 npm 这一条算成安装方式。');
   }
 
-  // （前置条件）R68：PyPI 的归属同样是硬前提。上游 lookupPyPI 目前只返回
-  //    { packageName, version, requiresPython }，**没有任何归属字段**；而"包名相同"从来不是证据
-  //    （npm 侧就是为此才做了 R42 取证：同名不同作者的包真实存在）。所以在拿到
-  //    repoMatches === true 之前，一条 pip install 都不下发 —— 宁可不给命令（R45 的方向）。
-  //    这是防御式实现：Task 10B 会给 lookupPyPI 补上 repoMatches / evidence（用 PyPI 的
-  //    project_urls / home_page 经 normalizeRepoUrl 归一化后严格比较，与 npm 侧同一套思路）。
+  // （前置条件）R68：PyPI 的归属同样是硬前提。Task 10B 之后上游 lookupPyPI 与 lookupNpm 一样返回
+  //    repoMatches / evidence（取证来自 PyPI 自己声明的 project_urls / home_page，经 normalizeRepoUrl
+  //    归一化后与目标 owner/repo 严格相等）；而"包名相同"从来不是证据（npm 侧就是为此才做了 R42 取证：
+  //    同名不同作者的包真实存在）。硬前置不变：只有 repoMatches === true 才下发 pip install
+  //    —— 宁可不给命令（R45 的方向）；缺失或 false 时记一条 notes，说清我们没能确认归属。
   const pypiOwned = pypi !== null && pypi.repoMatches === true && isNonEmpty(pypi.packageName);
   if (pypi !== null && isNonEmpty(pypi.packageName) && pypi.repoMatches !== true) {
     notes.push(`PyPI 上有一个叫 ${pypi.packageName.trim()} 的包，但我们没能确认它确实属于这个项目，所以不敢让你照着它装。`);

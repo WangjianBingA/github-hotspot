@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新手准备页 · 第一次用命令行要做什么</title>
+<!--
+  新手准备页（spec §4.2 的 v2 说明、§4.5 第 1 步）：这是给"从没打开过命令行"的人看的。
+  它必须回答四个问题，顺序就是照着做的顺序：
+    ① 命令行是什么、在 Windows 上怎么打开（两种走法）
+    ② 怎么知道自己装没装 Node / Python（给命令，也给"看到什么算装好了"）
+    ③ 榜单上复制来的那一行命令粘到哪里（黑窗口里，不是搜索框里）
+    ④ 怎么看结果、报错了怎么办、哪些话不要信
+  三条自我约束：
+    · 这一页**不探测访客的电脑**（网站是纯静态的，根本看不到你的机器）：所有"你装没装"都靠你自己敲命令看；
+    · 不出现行话（spec §4.3）：只说"命令行窗口""黑窗口""用键盘敲"，不说那个以 t 开头的英文词；
+    · 零依赖零构建：只用同一份 style.css，没有外链、没有脚本（这一页不需要 JS）。
+-->
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-head">
+  <h1>新手准备页</h1>
+  <p class="tagline">从没打开过命令行？照着这一页做一遍就行，大约十分钟。做完再回榜单上复制那行命令。</p>
+</header>
+
+<main>
+  <section class="guide-card">
+    <h2>第 1 步 · 命令行是什么，怎么打开它</h2>
+    <p>命令行就是一个**用键盘打字下命令**的窗口：没有按钮、没有图标，你打一行字，按回车，它就去干活。
+      它看起来有点吓人，但你在这一页里只需要做两件事：粘贴一行字、按回车。</p>
+    <p>在 Windows 上打开它，两种走法任选一种：</p>
+    <ol>
+      <li><strong>最省事的走法：</strong>按键盘左下角的 <strong>Windows 键</strong>（上面有个窗口图案的那个），
+        直接打字输入 <code>PowerShell</code>，屏幕上会出现「Windows PowerShell」，点它（或者按回车）。</li>
+      <li><strong>另一种走法：</strong>按 Windows 键，输入 <code>cmd</code>，出现「命令提示符」，点它。
+        这两个窗口都能用，随便哪个都行；下面说到"命令行窗口"时，指的就是它。</li>
+    </ol>
+    <p>打开之后你会看到一个深色（或者黑色）的窗口，里面有一行字，末尾通常是一个 <code>&gt;</code> 号，
+      后面有个光标在闪。那个光标就是在等你打字。</p>
+    <div class="tip">
+      <strong>看到的东西和上面不一样？</strong>没关系。只要你面前有一个窗口，里面有一行字和一个在闪的光标，
+      那就是命令行窗口，可以继续往下做。
+    </div>
+  </section>
+
+  <section class="guide-card">
+    <h2>第 2 步 · 看看电脑上装没装 Node 和 Python</h2>
+    <p>榜单上的项目，很多需要你的电脑上先有一个免费的小工具才能装。这里介绍两个最常见的：
+      <strong>Node.js</strong>（念"诺德"）和 <strong>Python</strong>（念"派森"）。
+      你不用现在决定装哪个——先照着下面两条命令各敲一遍，看看结果。</p>
+
+    <h3>怎么敲</h3>
+    <p>在刚打开的那个命令行窗口里，用键盘打上 <code>node -v</code>，然后按回车。
+      注意中间有个空格；打错了不要紧，重新打一遍就行。</p>
+    <p>打完按回车之后，会有两种结果：</p>
+    <ul>
+      <li>屏幕上冒出一行像 <code>v22.11.0</code> 这样的东西 —— <strong>说明已经装好了</strong>，不用再装。</li>
+      <li>屏幕上说「不是内部或外部命令」「无法将……识别为 cmdlet」或者类似的英文 ——
+        <strong>说明还没装</strong>。去下面「怎么装 Node.js」那一节照做。</li>
+    </ul>
+
+    <h3>Python 也一样</h3>
+    <p>在同一个窗口里打上 <code>python --version</code>，按回车。看到 <code>Python 3.12.4</code> 这样的字就是装好了；
+      说不认识这个命令就是没装。</p>
+
+    <h3>怎么装 Node.js</h3>
+    <ol>
+      <li>打开浏览器，访问官方网站：<a href="https://nodejs.org/" target="_blank" rel="noreferrer noopener">nodejs.org</a>。</li>
+      <li>页面上有个大大的绿色按钮，写着 <strong>LTS</strong>（长期支持版）。点它下载。</li>
+      <li>下载下来的是一个 <code>.msi</code> 安装包，双击它，然后一路点「下一步 / Next」，最后点「安装 / Install」。</li>
+      <li>装完<strong>把命令行窗口关掉再重新打开一次</strong>（这一步很关键：老窗口认不出刚装的工具），
+        再敲一次 <code>node -v</code>，这次应该就能看到版本号了。</li>
+    </ol>
+
+    <h3>怎么装 Python</h3>
+    <ol>
+      <li>打开官方网站：<a href="https://www.python.org/downloads/" target="_blank" rel="noreferrer noopener">python.org/downloads</a>。</li>
+      <li>点那个黄色的 <strong>Download Python 3.x.x</strong> 按钮，下载 <code>.exe</code> 安装包。</li>
+      <li>双击安装包。第一屏底下有两个小方框，<strong>一定要把「Add python.exe to PATH」勾上</strong>
+        （不勾的话，命令行会一直说不认识这个命令），然后点「Install Now」。</li>
+      <li>同样关掉命令行窗口再重新打开，敲 <code>python --version</code> 确认。</li>
+    </ol>
+
+    <div class="tip">
+      <strong>要不要一次全装？</strong>不用。看你想玩的那个项目需要什么就装什么：
+      项目详情里第 1 步会写"你需要先准备什么"，照着那一句做。
+    </div>
+  </section>
+
+  <section class="guide-card">
+    <h2>第 3 步 · 榜单上复制的那行命令，粘到哪里</h2>
+    <p>回到榜单，点开一个项目的卡片，第 2 步会给你一行命令，旁边有个「复制这一行」的按钮。流程是这样的：</p>
+    <ol>
+      <li>在详情里点「复制这一行」。</li>
+      <li>切回那个命令行窗口（在任务栏上点它，或者按 <code>Alt</code> 加 <code>Tab</code> 切换）。</li>
+      <li>把鼠标点在窗口里面的空白处，然后<strong>右键</strong>一下 —— 命令就会自己贴进去
+        （也可以按 <code>Ctrl</code> 加 <code>V</code>）。粘贴时屏幕上会多出一行字，那就是刚才复制的命令。</li>
+      <li>按<strong>回车</strong>。它就开始干活了，屏幕上会滚出一堆字。</li>
+    </ol>
+    <div class="tip">
+      <strong>最重要的一个坑：</strong>命令要粘到那个命令行窗口<strong>里面</strong>，
+      不是粘到按 Windows 键出来的搜索框里，也不是粘到浏览器地址栏里。粘错地方它不会理你。
+    </div>
+  </section>
+
+  <section class="guide-card">
+    <h2>第 4 步 · 怎么看结果，出错了怎么办</h2>
+    <ul>
+      <li><strong>成功的样子：</strong>字滚完了，最后又回到那个以 <code>&gt;</code> 结尾、光标在闪的状态，
+        中间可能出现「added 1 package」这类英文。这就装好了。</li>
+      <li><strong>看起来像失败的样子：</strong>满屏红字，或者停在某一行不动了、一直在转。
+        先别慌，也别乱点。</li>
+      <li><strong>想让它停下来：</strong>在那个窗口里按 <code>Ctrl</code> 加 <code>C</code>（也就是按住 Ctrl 再按 C）。</li>
+    </ul>
+    <p>报错了怎么办？把红字<strong>整段选中复制下来</strong>（在窗口里按住鼠标左键拖过那些字，然后按回车或右键复制），
+      连同项目名字一起，粘到搜索引擎或者 AI 助手里问："我在装某某项目，出现了这些字，怎么办"。
+      看不懂之前，不要随手点"允许"或者关掉杀毒软件。</p>
+    <div class="tip">
+      <strong>几句大实话：</strong>
+      <ul class="plain-list">
+        <li>这些东西都是免费的公开项目。**不要为装它付钱**，也不要在别的网站下载安装包——只按项目详情里给的那个官方地址下载。</li>
+        <li>命令行只看你打进去的字，它不会自己乱动你的文件。但"复制别人的命令就按回车"这件事本身要谨慎：
+          只粘你在这个榜单的项目详情里看到的、或者你信得过的人给你的命令。</li>
+        <li>网站看不到你的电脑（它是纯静态的，没有这个能力），所以"你装没装 Node / Python"只能靠你自己敲上面那两条命令确认。</li>
+        <li>实在做不下去也没关系：先把项目主页收藏起来，过一阵再来。榜单每天都会更新。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="guide-card">
+    <h2>还是不会？三条退路</h2>
+    <ol>
+      <li>把项目详情里第 2 步那一行命令，连同"这是干什么用的"，整段复制给 AI 助手，让它一步一步带着你做。</li>
+      <li>先挑标着「🟢 一键就能玩」的项目练手：它们不用命令行，下载下来双击就能用。</li>
+      <li>回到榜单，点「🏆 经典必玩」，那些是很多人早就用过的东西，说明和教程通常更多。</li>
+    </ol>
+  </section>
+</main>
+
+<footer class="site-foot">
+  <p class="foot-line"><a href="index.html">← 回到榜单</a></p>
+  <p class="foot-line">这一页不探测你的电脑，也不收集任何东西；它只是一份说明，帮你走到"能自己粘一行命令"这一步。</p>
+</footer>
+</body>
+</html>

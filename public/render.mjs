@@ -106,6 +106,47 @@ const hasLanguage = (item) => typeof item?.language === 'string' && item.languag
 /** 本地还没跑过采集时，给新手的那条命令（R99：只写今天真能用的一条）。 */
 const COLLECT_COMMAND = '<code>npm run collect --offline</code>';
 
+// ---------- 详情抽屉的文案（Task 17；每一句都是"显示决策"，所以住在这一层） ----------
+
+/** 抽屉里各节的标题。 */
+const DRAWER_TITLES = {
+  guide: '怎么装（三步）',
+  why: '为什么上榜',
+  facts: '项目基本事实',
+  classic: '它凭什么在这个榜里',
+  faq: '常见问题',
+};
+
+/**
+ * 列表上方那句说明（Task 17 起抽屉真的存在了）：点开卡片会发生什么，必须如实说。
+ * 注意它**不能**写成"点开就能看到三步安装说明"——凡是清单里出现这句话的写法一律被测试拦下；
+ * 我们说的是"会有每一步要做什么"，而具体每一步来自项目自己的数据。
+ */
+const CARD_DETAIL_HINT = '点开卡片会打开详情：把「怎么装」拆成三步，每一步做什么都写清楚了。'
+  + '看不懂的地方，先看<a href="prepare.html">新手准备页</a>，从头照着做一遍。';
+
+/** 卡片上那句"这里可以点开"的入口说明（R105：抽屉做好之后不能再写"还在做"）。 */
+const CARD_DETAIL_ENTRY = '点开看详情（怎么装、为什么上榜）';
+
+/** 命令框下面那句提示（真实缺陷：以前没说"失败了怎么办"，用户会以为按钮坏了）。 */
+const COPY_HINT = '按钮会把这一行复制到剪贴板；要是没反应，就自己选中这一行，按 Ctrl 加 C。';
+
+/** 复制成功/失败后给用户的一句话（由 app.js 贴到 aria-live 的那一格上）。 */
+export const COPY_DONE_TEXT = '已经复制好了，去命令行窗口里粘贴吧（右键粘贴，或者按 Ctrl 加 V）。';
+export const COPY_FAIL_TEXT = '没能自动复制。请自己选中那一行命令，按 Ctrl 加 C 复制。';
+
+/** 没有预生成向导时的指路话（不假装有步骤）。 */
+const NO_GUIDE_TEXT = '这个项目没有现成的安装步骤，我们只能让你去它自己的主页看：'
+  + '打开下面的「打开项目主页」，里面一般有「安装 / Installation」那一段。看不懂就把那一段整段复制给 AI 助手，让它讲成大白话。';
+
+/** 经典榜不参与三轴评分（R25），所以它这一节说的是"它凭什么在这个榜里"。 */
+const CLASSIC_NOTE = '这个榜按总收藏人数排，不参与热度、口碑、新手友好这三项的评分——'
+  + '所以这里没有分数，只看它是多少人的老朋友、最近还动不动。';
+
+/** 抽屉底部那句"这条详情是从哪来的"（与页面页脚同一口径，缺少的数据整行不写）。 */
+const DRAWER_FOOT_NOTE = '上面的数字：带「实测」的是我们前后两次记录相减量出来的，'
+  + '带「GitHub 官方数据」的是官方页面自己写的，带「约」和「估算」的是我们推算的。';
+
 // ---------- 转义（外部输入进 HTML 的唯一通道） ----------
 
 /**
@@ -323,6 +364,23 @@ function projectName(item) {
 }
 
 /**
+ * 一条条目的增长速度事实（卡片与详情共用）。
+ * 数据文件里的速度字段有两套写法：collector 既写扁平的顶层字段（得分速度三项），也把原始对象整个带下来。
+ * 这里先把两套合成一份再判定 —— 只看嵌套对象会漏掉扁平字段，而漏掉的后果是把"我们没问到"渲染成"新增 0"
+ * （正是要防的谎话）。源头优先信扁平字段：collector 用的是它，raw 对象里可能根本没有那个键。
+ * @param {object} item 条目
+ * @returns {{ gained7d: number|undefined, gained3d: number|undefined, confidence: string|undefined, source: string|undefined }}
+ */
+function itemVelocity(item) {
+  return {
+    gained7d: item?.velocity?.gained7d ?? item?.starsGained7d,
+    gained3d: item?.velocity?.gained3d ?? item?.starsGained3d,
+    confidence: item?.velocity?.confidence ?? item?.confidence,
+    source: item?.velocitySource ?? item?.velocity?.source,
+  };
+}
+
+/**
  * 卡片上的元信息：难度徽章 + 中文徽章 + 新增收藏（含近 3 日，有数据才显示）+ 事实。
  * 卡片上**不放三轴明细**（那是点开详情才看的东西），所以这里不调 boardScore。
  * @param {{ boardId: string, item: object }} input
@@ -330,16 +388,7 @@ function projectName(item) {
  */
 export function itemMeta({ boardId, item }) {
   const badges = [difficultyBadge(item?.grade), chineseBadge(item)].filter((html) => html !== '').join('');
-  // 数据文件里的速度字段有两套写法：collector 既写扁平的顶层字段（starsGained7d / confidence /
-  // velocitySource），也把原始 velocity 对象整个带下来。这里先把两套合成一份再判定 ——
-  // 只看 item.velocity 会漏掉扁平字段，而漏掉的后果是把"我们没问到"渲染成"新增 0"（正是要防的谎话）。
-  const velocity = {
-    gained7d: item?.velocity?.gained7d ?? item?.starsGained7d,
-    gained3d: item?.velocity?.gained3d ?? item?.starsGained3d,
-    confidence: item?.velocity?.confidence ?? item?.confidence,
-    // 源头优先信扁平字段：collector 用的是它，raw 对象里可能根本没有这个键。
-    source: item?.velocitySource ?? item?.velocity?.source,
-  };
+  const velocity = itemVelocity(item);
   const growth = growthNotice(velocity);
   const growthHtml = growth.known
     ? `<span class="growth growth-${escapeAttr(growth.tone)}">${escapeHtml(growth.text)}</span>`
@@ -377,24 +426,218 @@ export function itemCard({ boardId, item }) {
     + itemMeta({ boardId, item })
     + boardScore(boardId, item)
     + reasonHtml
-    // R105：这里**不能**承诺"点开就能看怎么装"。抽屉要到 Task 17 才有，现在点开只会看到
-    // 一句"下个版本"的提示，所以卡片上只说当下成立的话。整节说明在 buildBoardView 的 hints 里。
-    + `<div class="card-actions">${link}<span class="hint">详情入口（还在做）。</span></div>`
+    // Task 17 起抽屉真的存在了：这里如实说"点开有详情"，不再写"还在做"（写了就是对用户说谎）。
+    + `<div class="card-actions">${link}<span class="hint">${CARD_DETAIL_ENTRY}</span></div>`
     + '</div>';
 }
 
 /**
  * 榜单列表上方那段说明（R102：文案选择属于显示决策，住在纯函数层）。
  *
- * R97 / R105：**不能**承诺"点开卡片就能看到详细介绍 / 三步安装说明"——那两样要 Task 17 才有，
- * 现在点开只会看到一句"下个版本"的提示。所以这里如实说"还在做"，并把新手准备页的链接给出来。
  * 返回的是**纯文本**（可以有链接这种行内标签），外层由调用方包成段落。
  * @returns {string} HTML 片段（纯文本 + 一个链接）
  */
 export function cardDetailHint() {
-  return '点开卡片目前只会看到一句提示：详细说明与三步安装说明还在做（下一个版本上线）。'
-    + '想看项目本身，点卡片里的「打开项目主页」；如果你从没打开过命令行，'
-    + '先看<a href="prepare.html">新手准备页</a>，从头照着做一遍就行。';
+  return CARD_DETAIL_HINT;
+}
+
+// ---------- 详情抽屉（Task 17；R25 / R64 / R78 / 置信度 / 转义都在这里定） ----------
+
+/**
+ * 第 2 步那条命令的"可复制"那一行：一个只读的方块 + 一个复制按钮。
+ * `data-copy-source` 指向放命令文本的元素，`data-copy-target` 指向贴结果的那一格——
+ * app.js 靠这两个属性取文本、贴回执，它自己**不认识**任何字段名（R102）。
+ * @param {string} command 命令原文（外部输入，进属性前转义）
+ * @param {string} copyId 这一格回执的 id
+ * @returns {string} HTML
+ */
+function commandBlock(command, copyId) {
+  return `<div class="install-command" data-copy-command><code class="install-command-text">${escapeHtml(command)}</code>`
+    + `<button type="button" class="copy-button" data-copy-source=".install-command-text" data-copy-target="#${escapeAttr(copyId)}">复制这一行</button></div>`
+    + `<p class="copy-hint" id="${escapeAttr(copyId)}" role="status" aria-live="polite">${escapeHtml(COPY_HINT)}</p>`;
+}
+
+/**
+ * 这一步的正文。
+ * 第 2 步的正文里**带着命令本身**（collector 就这么写的，纯文本消费者只读正文也不会丢东西），
+ * 所以渲染时把那一行换成"可复制的方块"（而不是让同一行命令既出现在正文段落里、又出现在方块里）——
+ * 同一行命令在界面上出现两遍，用户会以为是两条不同的命令。
+ * @param {string} body 正文
+ * @param {string} command 命令（空串表示这一步没有命令）
+ * @param {string} copyId 复制回执的 id
+ * @param {boolean} withCommand 正文里没写命令时，要不要在这一步补一个方块（只在该给命令的那一步为真）
+ * @returns {string} HTML
+ */
+function stepBody(body, command, copyId, withCommand) {
+  const lines = String(body ?? '').split('\n').map((line) => line.trim()).filter((line) => line !== '');
+  let blockDone = false;
+  const parts = lines.map((line) => {
+    if (command !== '' && line === command && !blockDone) {
+      blockDone = true;
+      return commandBlock(command, copyId);
+    }
+    return `<p class="step-line">${escapeHtml(line)}</p>`;
+  });
+  // 正文里没有那行命令（形状变了）时，只在"该给命令的那一步"补一个复制方块，而且**只补一次**：
+  // 以前这里不看 step，于是每一段提到命令的正文（例如第 3 步"装好后敲 npx …"）后面都会再挂一个
+  // 同样的方块——同一行命令在抽屉里出现三遍，用户会以为是三条不同的命令。
+  if (command !== '' && !blockDone && withCommand === true) parts.push(commandBlock(command, copyId));
+  return parts.join('');
+}
+
+/**
+ * 三步安装向导 + 常见问题，**全部照搬 JSON 里预生成好的 `install.steps` / `install.faq`**（R78）。
+ * 渲染层一个字都不重新生成：向导的生成逻辑在采集端（src/enrich/runnability.mjs），
+ * 在这里再写一份就等于有了第二个真相源，两处早晚会不一致。
+ * @param {{ steps?: object[], faq?: object[], command?: string, downloadUrl?: string }} [guide]
+ * @returns {string} HTML；没有向导时是空串
+ */
+export function installGuideHtml(guide) {
+  const steps = asArray(guide?.steps).filter((step) => step && typeof step === 'object');
+  const faq = asArray(guide?.faq).filter((entry) => entry && typeof entry === 'object');
+  // 命令：优先认 collector 明确标出来的那一条，没有就从第 2 步正文里找（形状变了也不至于不给命令）。
+  let command = typeof guide?.command === 'string' ? guide.command.trim() : '';
+  if (command === '') {
+    const searched = steps.map((step) => (typeof step.body === 'string' ? step.body : ''))
+      .flatMap((body) => body.split('\n'))
+      .map((line) => line.trim())
+      .find((line) => /^(?:npx|npm|pip|docker|git|yarn|pnpm|curl|python|python3|go|brew|cargo)\s+\S/.test(line));
+    command = searched ?? '';
+  }
+  const downloadUrl = typeof guide?.downloadUrl === 'string' && guide.downloadUrl !== '' ? guide.downloadUrl : '';
+
+  // 步骤与常见问题都没有时，不编步骤、也不留一个空壳标题，改为指路。
+  if (steps.length === 0 && faq.length === 0) return '';
+
+  const stepHtml = steps.map((step, index) => {
+    const title = typeof step.title === 'string' && step.title !== '' ? escapeHtml(step.title) : `第 ${index + 1} 步`;
+    // 正文里带着命令的那一步才给复制方块；命令放哪由 stepBody 定，不在这里重复贴。
+    // withCommand：万一某个来源的正文里没写命令（形状变了），也只在**承载命令的那一步**补一个方块
+    // （标题里写着"复制"的那一步，或者第二步），不会在每一步后面都挂一个。
+    const copyId = `copy-status-${index + 1}`;
+    const withCommand = command !== '' && (String(step.title ?? '').includes('复制') || index === 1);
+    const bodyHtml = typeof step.body === 'string' && step.body !== ''
+      ? stepBody(step.body, command, copyId, withCommand)
+      : (withCommand ? commandBlock(command, copyId) : '');
+    // 下载按钮只在这一步真的有下载地址时给；没有就不给（给一个死链接比不给更糟）。
+    const downloadHtml = typeof step.downloadUrl === 'string' && step.downloadUrl !== ''
+      ? `<a class="download-button" data-download href="${escapeAttr(step.downloadUrl)}" target="_blank" rel="noreferrer noopener">下载安装包</a>`
+      : '';
+    return `<li class="install-step"><h4 class="step-title">${title}</h4>${bodyHtml}${downloadHtml}</li>`;
+  }).join('');
+
+  // 没有命令、但有下载地址时（Windows 安装包那种），在第 2 步的下载按钮之外再给一次明显入口。
+  const topDownload = steps.some((step) => typeof step.downloadUrl === 'string' && step.downloadUrl !== '')
+    ? ''
+    : (downloadUrl === '' ? '' : `<p class="step-line"><a class="download-button" data-download href="${escapeAttr(downloadUrl)}" target="_blank" rel="noreferrer noopener">下载安装包</a></p>`);
+
+  const faqHtml = faq.length === 0 ? '' : `<details class="faq"><summary>${escapeHtml(DRAWER_TITLES.faq)}（${faq.length} 条）</summary>`
+    + `<dl class="faq-list">${faq.map((entry) => {
+      const question = typeof entry.q === 'string' ? entry.q : '';
+      const answer = typeof entry.a === 'string' ? entry.a : '';
+      return `<dt>${escapeHtml(question)}</dt><dd>${escapeHtml(answer)}</dd>`;
+    }).join('')}</dl></details>`;
+
+  return `<section class="drawer-section" data-section="guide"><h3 class="section-title">${escapeHtml(DRAWER_TITLES.guide)}</h3>`
+    + `<ol class="install-steps">${stepHtml}</ol>${topDownload}${faqHtml}</section>`;
+}
+
+/**
+ * "为什么上榜"这一节。R25：经典必玩榜不参与三轴评分，所以**那个榜不渲染分数条**，
+ * 改成说清它真正依据的两件事（总收藏人数 + 最后更新时间）。
+ * @param {string} boardId 榜单 id
+ * @param {object} item 条目
+ * @returns {string} HTML
+ */
+export function whySection(boardId, item) {
+  const reasons = asArray(item?.reasons).filter((reason) => typeof reason === 'string' && reason !== '');
+  const reasonHtml = reasons.length === 0
+    ? ''
+    : `<ul class="reasons drawer-reasons">${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>`;
+
+  if (boardId === CLASSIC_ID) {
+    // 不画分数条、不写"为什么上榜"：那个榜不是按三轴分数排上来的（R25）。
+    const facts = factsForBoard(boardId, item)
+      .map((fact) => `<span class="fact"><span class="fact-label">${escapeHtml(fact.label)}</span>${escapeHtml(fact.value)}</span>`)
+      .join('');
+    return `<section class="drawer-section" data-section="classic"><h3 class="section-title">${escapeHtml(DRAWER_TITLES.classic)}</h3>`
+      + `<p class="section-note">${escapeHtml(CLASSIC_NOTE)}</p><div class="meta-line">${facts}</div>${reasonHtml}</section>`;
+  }
+
+  const bars = scoreBars(boardId, item);
+  const summary = boardScore(boardId, item);
+  if (bars === '' && summary === '' && reasonHtml === '') return '';
+  return `<section class="drawer-section" data-section="why"><h3 class="section-title">${escapeHtml(DRAWER_TITLES.why)}</h3>`
+    + `${summary}${bars}${reasonHtml}</section>`;
+}
+
+/**
+ * 详情抽屉的完整内容（标题 / 三步向导 / 为什么上榜 / 基本事实 / 走不走得通 / 打开主页）。
+ *
+ * 三条硬规矩落在这里：
+ *   · R78：向导来自 JSON 里预生成的 `install.steps` / `install.faq`，本层只渲染、不生成；
+ *   · R25：经典榜不画三轴分数条、不说"为什么上榜"，改说总收藏与最后更新；
+ *   · 置信度与"没问到"的口径与卡片一致（`growthNotice` / `confidenceNotice`），绝不把不知道写成 0。
+ * 返回的是**抽屉内容**（不是整个抽屉壳）：外层 `<section id="drawer">` 与关闭按钮在 index.html 里，
+ * 所以 app.js 只需把这段内容贴进 `#drawer-body`。
+ * @param {{ boardId?: string, item?: object }} [input]
+ * @returns {string} HTML；形参缺失时也返回一段可用的内容（绝不为空串）
+ */
+export function detailDrawer(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  const boardId = typeof source.boardId === 'string' ? source.boardId : '';
+  const item = source.item && typeof source.item === 'object' ? source.item : {};
+  const install = item.install && typeof item.install === 'object' ? item.install : {};
+  const full = typeof item.ownerRepo === 'string' ? item.ownerRepo : '';
+  const name = projectName(item);
+
+  // 中文徽章照卡片口径（R64），再加难度徽章：抽屉里看到的两个徽章与卡片上一模一样。
+  const badges = [difficultyBadge(item.grade), chineseBadge(item)].filter((html) => html !== '').join('');
+  const description = typeof item.description === 'string' && item.description !== ''
+    ? escapeHtml(item.description)
+    : '';
+
+  const guideHtml = installGuideHtml(install);
+  const guideSection = guideHtml === ''
+    ? `<section class="drawer-section" data-section="guide"><p class="section-note">${escapeHtml(NO_GUIDE_TEXT)}</p></section>`
+    : guideHtml;
+
+  // 事实表（语言、总收藏、拿去改造、最后更新、许可证、维护状态）：拿不到的整条不列。
+  const facts = factList(item);
+  const factHtml = facts.length === 0
+    ? ''
+    : `<section class="drawer-section" data-section="facts"><h3 class="section-title">${escapeHtml(DRAWER_TITLES.facts)}</h3>`
+      + `<dl class="fact-list">${facts.map((fact) => `<dt>${escapeHtml(fact.label)}</dt><dd>${escapeHtml(fact.value)}</dd>`).join('')}</dl></section>`;
+
+  // 增长速度：与卡片同一套判定（source 为 'none' 时 growthNotice 整行省略，只留"没查到"那句）。
+  const velocity = itemVelocity(item);
+  const growth = growthNotice(velocity);
+  const threeDay = confidenceNotice(velocity);
+  const velocityHtml = `<p class="drawer-growth">`
+    + (growth.known ? escapeHtml(growth.text) : GROWTH_UNKNOWN_TEXT)
+    + (threeDay === '' ? '' : ` · ${escapeHtml(threeDay)}`)
+    + '</p>';
+
+  // 取证来源的中文说法（绝不回显英文原始值）；同时把"我们是怎么确认的"一并说清。
+  const evidence = evidenceNotice(install.evidence);
+  const evidenceHtml = evidence === '' ? '' : `<p class="drawer-evidence">${escapeHtml(evidence)}</p>`;
+
+  const homeLink = full === ''
+    ? ''
+    : `<a class="project-link" href="https://github.com/${escapeAttr(full)}" target="_blank" rel="noreferrer noopener">打开项目主页</a>`;
+  const prepareLink = '<a class="prepare-link" href="prepare.html">打开新手准备页</a>';
+
+  return `<h3 class="drawer-title">${escapeHtml(name)}</h3>`
+    + `<p class="drawer-path">${escapeHtml(full)}</p>`
+    + (badges === '' ? '' : `<div class="badges">${badges}</div>`)
+    + (description === '' ? '' : `<p class="drawer-desc">${description}</p>`)
+    + guideSection
+    + whySection(boardId, item)
+    + factHtml
+    + velocityHtml
+    + evidenceHtml
+    + `<div class="drawer-actions">${homeLink}${prepareLink}</div>`
+    + `<p class="drawer-foot">${escapeHtml(DRAWER_FOOT_NOTE)}</p>`;
 }
 
 // ---------- 状态：该显示哪些条目、该给哪些提示（R93 / R102） ----------
@@ -430,6 +673,38 @@ export function boardNote(boardId) {
 export function difficultyFilterHint(boardId) {
   if (boardAcceptsDifficultyFilter(boardId)) return '';
   return '经典榜按总收藏人数排序、不参与评分，所以「🟢 一键就能玩」这个筛选对它不生效——切回上面两个榜就生效了。';
+}
+
+/**
+ * 某一期里，语言清单与"没标注语言"的条数（R95 的事实本体，R108 让它能被提前单独调用）。
+ * 语言清单来自这一期真实的条目、稳定排序；认不出语言的单独计数，好让它们也能被筛出来。
+ * @param {object[]} [items] 这一榜的条目
+ * @returns {{ languages: string[], unknownLanguageCount: number }}
+ */
+export function languageFacts(items) {
+  const list = asArray(items);
+  const languages = [...new Set(list
+    .map((item) => item?.language)
+    .filter((language) => hasLanguage({ language })))]
+    .sort();
+  const unknownLanguageCount = list.filter((item) => !hasLanguage(item)).length;
+  return { languages, unknownLanguageCount };
+}
+
+/**
+ * 某一期里，当前选中的语言筛选还成不成立（R103 的判断本体）。
+ *
+ * R108：这个判断必须能被**单独调用**。以前 app.js 是在算完视图、画完列表之后才从视图里读到
+ * "选择失效"，于是那一次渲染画出来的是"已经重置的控件 + 空列表"，要等用户再点一下才恢复。
+ * 现在它自己就是一个纯函数：app.js 可以先问它、把无效的选择回退掉，**然后再**算视图。
+ * @param {string} value 选中的语言（UNKNOWN_LANGUAGE 表示"没有标注语言"那一项）
+ * @param {{ languages?: string[], unknownLanguageCount?: number }} [facts] languageFacts 的结果
+ * @returns {boolean} true 表示这个选择在这一期成立
+ */
+export function languageSelectionIsValid(value, facts = {}) {
+  if (typeof value !== 'string' || value === '') return true;
+  if (value === UNKNOWN_LANGUAGE) return isNum(facts.unknownLanguageCount) && facts.unknownLanguageCount > 0;
+  return asArray(facts.languages).includes(value);
 }
 
 /**
@@ -472,6 +747,19 @@ export function buildBoardView(input = {}) {
   // 筛选：R96 经典榜忽略难度筛选；R64 中文筛选只认 hasChinese；语言筛选按相等比较。
   const wantEasy = filters.easy === true && boardAcceptsDifficultyFilter(boardId);
   const language = typeof filters.language === 'string' ? filters.language : '';
+
+  // 语言清单（R95）：来自这一榜当期的真实数据，稳定排序；认不出语言的单独计数。
+  // R108：清单与"选择是否成立"都在**过滤条目之前**算出来，这样 app.js 能先回退无效选择再算视图，
+  // 不会出现"控件已重置、列表却是空的"那一次过期渲染。这段事实的算法住在 languageFacts 里，
+  // app.js 提前问的也是它 —— 两边不会各说各话。
+  const facts = languageFacts(items);
+  const { languages } = facts;
+  const unknownLanguageCount = facts.unknownLanguageCount;
+  // R103：选中的语言在当前这一期必须真的存在（"没有标注语言"那一项也一样）。
+  // 这条判断从 DOM 层搬到这里，就是为了让"跨期切换后筛选状态与选项是否一致"可以被断言；
+  // app.js 据此把无效的选择回退成"全部语言"，不再出现"空列表 + 空白下拉"。
+  const languageSelectionValid = languageSelectionIsValid(language, facts);
+
   const visible = items.filter((item) => {
     if (wantEasy && item?.grade !== 'green') return false;
     if (filters.chinese === true && item?.hasChinese !== true) return false;
@@ -479,18 +767,6 @@ export function buildBoardView(input = {}) {
     if (language !== '') return item?.language === language;
     return true;
   });
-
-  // 语言清单（R95）：来自这一榜当期的真实数据，稳定排序；认不出语言的单独计数。
-  const languages = [...new Set(items
-    .map((item) => item?.language)
-    .filter((item) => hasLanguage({ language: item })))]
-    .sort();
-  const unknownLanguageCount = items.filter((item) => !hasLanguage(item)).length;
-  // R103：选中的语言在当前这一期必须真的存在（"没有标注语言"那一项也一样）。
-  // 这条判断从 DOM 层搬到这里，就是为了让"跨期切换后筛选状态与选项是否一致"可以被断言；
-  // app.js 据此把无效的选择回退成"全部语言"，不再出现"空列表 + 空白下拉"。
-  const languageSelectionValid = language === ''
-    || (language === UNKNOWN_LANGUAGE ? unknownLanguageCount > 0 : languages.includes(language));
 
   const notices = [];
   // 顺序即重要性：数据不完整排最前（它影响整页读数），然后才是"这块为什么是空的"。
@@ -509,7 +785,8 @@ export function buildBoardView(input = {}) {
     }
   } else if (!Array.isArray(daily.boards)) {
     // R101：JSON 合法但形状不对（boards 不是数组）。以前这里会抛错，页面永远停在"正在读取…"。
-    notices.push({ key: 'broken', html: dataErrorNotice() });
+    // R107：把"有几天可换"传进去，提示才不会建议一件用户做不到的事。
+    notices.push({ key: 'broken', html: dataErrorNotice(dates.length) });
   } else if (items.length === 0) {
     notices.push({ key: 'empty', html: boardNotice({ boardTitle: title, itemCount: 0 }) });
   } else if (visible.length === 0) {
@@ -611,12 +888,19 @@ export function noDataNotice() {
 /**
  * 数据文件在、但形状不对（例如 `boards` 不是数组）时的提示（R101）。
  * 一句"读不出来"远比一个永远转圈的空白页诚实。
+ * R107：建议必须与用户**当下真能做的事**一致——日期选择器只在有两天以上数据时才出现，
+ * 所以只有一份数据时不能说"用页面底部的日期选择器换一天看看"（那是个做不到的建议，
+ * 与 R104 对 `missingDateNotice` 的要求同一条道理）。
+ * @param {number} [dateCount] 一共有几天可看（≥2 才提日期选择器）
  * @returns {string} HTML
  */
-export function dataErrorNotice() {
+export function dataErrorNotice(dateCount) {
+  const more = isNum(dateCount) && dateCount >= 2
+    ? '你也可以用页面底部的日期选择器换一天看看（那一天的文件可能没坏）。'
+    : '现在只有这一份数据，所以没有别的日期可换。';
   return '<div class="notice notice-empty"><strong>这一期的数据文件读不出来。</strong>'
     + '文件在，但里面的内容和这个页面期待的形状不一样（可能是采集写到一半、或者文件被改坏了）。'
-    + `重跑一次采集就会覆盖掉它：在项目目录里运行 ${COLLECT_COMMAND}。也可以用页面底部的日期选择器换一天看看。</div>`;
+    + `重跑一次采集就会覆盖掉它：在项目目录里运行 ${COLLECT_COMMAND}。${more}</div>`;
 }
 
 /**

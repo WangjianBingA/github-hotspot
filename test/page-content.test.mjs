@@ -13,7 +13,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { createStaticServer } from '../src/http/static-server.mjs';
 import {
   CHINESE_BADGE,
@@ -25,7 +25,9 @@ import {
   boardNote,
   chineseBadge,
   confidenceNotice,
+  dataErrorNotice,
   degradedNotice,
+  detailDrawer,
   difficultyBadge,
   difficultyFilterHint,
   escapeAttr,
@@ -35,6 +37,7 @@ import {
   growthNotice,
   itemCard,
   itemMeta,
+  missingDateNotice,
   noDataNotice,
   scoreBars,
 } from '../public/render.mjs';
@@ -46,8 +49,76 @@ const read = (p) => readFileSync(new URL(`../public/${p}`, import.meta.url), 'ut
  * 为什么必须去注释：注释里会引用禁令原文（例如"不能承诺点开就能看安装说明"），
  * 那不是文案，直接扫全文会把正确的注释判成违规。真正的风险恰恰是"有人照注释抄进模板串"，
  * 那一步会留在代码里，被这些断言抓住。
+ *
+ * R106（真实缺陷，已修）：这里原来是一句"一条正则删掉所有注释"的写法，它把**字符串里的两个斜杠**
+ * 也当成注释开头，于是从那个位置起把后面整段真代码删掉（连字符串的收尾引号
+ * 一起删，删除范围还会溢出到后面的行）。后果不是"多删了点注释"，而是**让诚实断言空转成永久绿**：
+ * 扫不到的东西当然不违规。
+ *
+ * 现在改成**按引号配对扫描**：先知道"此刻在不在字符串里"，才谈得上"这是不是注释"。
+ * 这里比第一版多了一层（第一版只用一个 quote 变量记"现在在不在字符串里"）：
+ * 模板串里可以再套模板串（`` `${list.map((x) => `<li>${x}</li>`)}` ``），
+ * 用一个变量记状态时，内层那个反引号会被当成"外层模板串结束"，后面整段内容就被当成代码去解析，
+ * 于是 `https://` 里的两个斜杠又被当成注释、真代码再次被删掉（实测：第一版在 render.mjs 上
+ * 会让 noreferrer 由 4 处变 3 处）。所以现在用一个模式栈：
+ *   · 单引号 / 双引号串：跳到配对的引号；
+ *   · 模板串：内容原样抄出来，只有 `${…}` 里才当代码继续解析，`}` 之后又回到模板串；
+ *   · 代码：`//` 删到行尾、`/* … *​/` 整块删掉（并补一个换行，让行号还能对上）。
+ * @param {string} source 源码
+ * @returns {string} 去掉注释（保留字符串字面量内容）的源码
  */
-const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+function stripComments(source) {
+  const text = String(source ?? '');
+  let out = '';
+  let i = 0;
+  // 模式栈：'code' 表示按代码解析；'template' 表示在模板串内容里（只有 `${` 会切回代码）。
+  const stack = ['code'];
+
+  /** 跳过一段带引号的串（单引号或双引号），内容原样抄出来。 */
+  const readQuoted = (quote) => {
+    out += quote;
+    i += 1;
+    while (i < text.length) {
+      const ch = text[i];
+      out += ch;
+      i += 1;
+      if (ch === '\\' && i < text.length) { out += text[i]; i += 1; continue; }
+      if (ch === quote || ch === '\n') return;
+    }
+  };
+
+  while (i < text.length) {
+    if (stack[stack.length - 1] === 'template') {
+      const ch = text[i];
+      if (ch === '\\') { out += ch; i += 1; if (i < text.length) { out += text[i]; i += 1; } continue; }
+      if (ch === '`') { out += ch; i += 1; stack.pop(); continue; }
+      if (ch === '$' && text[i + 1] === '{') { out += '${'; i += 2; stack.push('code'); continue; }
+      out += ch;
+      i += 1;
+      continue;
+    }
+
+    const ch = text[i];
+    if (ch === "'" || ch === '"') { readQuoted(ch); continue; }
+    if (ch === '`') { out += ch; i += 1; stack.push('template'); continue; }
+    if (ch === '}' && stack.length > 1) { out += ch; i += 1; stack.pop(); continue; }
+    if (ch === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1;
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1;
+      // 换行补回去：注释被删掉后，剩下的代码行号还能对上文件里的行号（排查时省事）。
+      i += 2;
+      out += '\n';
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
 
 /** 造一条榜单条目：只给测试关心的字段，其余交给默认值。 */
 const item = (extra = {}) => ({ ownerRepo: 'demo/tool', name: 'tool', rank: 1, ...extra });
@@ -78,8 +149,8 @@ test('置信度文案与三步向导：页面明说三种说法，且引用新�
   // 新手准备页的链接在提示语里（render.mjs），"还在做 / 下个版本"的实话在两边都有：
   // 两个文件一起看——只看一个文件正是 R105 里那句话溜过去的原因。
   assert.match(read('render.mjs'), /prepare\.html/);
-  assert.match(stripComments(read('render.mjs') + read('app.js')), /还在做|下一个版本/);
-  assert.match(read('app.js'), /下一个版本/);
+  assert.match(read('app.js'), /detailDrawer\(/);
+  assert.match(read('app.js'), /bindCards\(/);
 });
 
 test('首页引入渲染模块，app.js 真的用它渲染（不是只写在注释里）', () => {
@@ -101,6 +172,9 @@ function renderedText(boardId, item) {
     boardScore(boardId, item),
     scoreBars(boardId, item),
     itemCard({ boardId, item }),
+    // 详情抽屉也是用户可见的位置（Task 17 加的）。它必须进这张扫描表：
+    // 落在这里之外的新界面，等于给自己开了一个可以偷偷说谎的后门。
+    detailDrawer({ boardId, item }),
     growthNotice(item.velocity).text,
     confidenceNotice(item.velocity),
     evidenceNotice(item.install?.evidence),
@@ -122,7 +196,7 @@ test('渲染层任何用户可见文案都不得出现行话', () => {
   }
 
   // 代码部分只扫字符串与模板串：读 JSON 的字段名（readsArchived 那种形态）不是给用户看的文案。
-  const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  const code = stripComments(source);
   const literals = code.match(/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g) ?? [];
   assert.ok(literals.length > 10, '没扫到字符串字面量，正则写错了');
   for (const literal of literals) {
@@ -396,11 +470,14 @@ test('R97：页面文案不得声称"点开就能看到三步安装说明"', () 
   // 现在两个文件都扫，而且只看**代码**（注释里引用那条禁令本身不算文案）。
   for (const [name, source] of Object.entries({ 'app.js': read('app.js'), 'render.mjs': read('render.mjs') })) {
     const code = stripComments(source);
-    // 断言必须精确：粗糙的 /点开.*三步/ 会命中那句本来就在如实说明"还在做"的话，把正确的文案判成错的。
-    // 注意 app.js 里那句实话用的是"下一个版本"（点击时弹的提示），render.mjs 用的是"还在做"（列表上方说明）。
+    // 断言必须精确：粗糙的 /点开.*三步/ 会命中那些本来就在如实说明的话，把正确的文案判成错的。
     assert.ok(!/点开[^。；\n：]{0,20}(可以看到|就能看到|可查看|即可看到)[^。；\n]{0,20}三步安装说明/.test(code),
       `${name} 里承诺了还不存在的抽屉`);
-    assert.match(code, /还在做|下一个版本/, `${name} 要说清"还在做"，而不是含糊其辞`);
+  }
+  // Task 17 起抽屉真的存在了：这两个文件不该再出现"还在做 / 下一个版本"这种过期说法
+  // （说过期的话和说假话是一回事——用户点开真的能看到详情）。
+  for (const [name, source] of Object.entries({ 'app.js': read('app.js'), 'render.mjs': read('render.mjs') })) {
+    assert.ok(!/还在做|下一个版本/.test(stripComments(source)), `${name} 里还挂着过期的"还在做"`);
   }
 });
 
@@ -521,8 +598,8 @@ test('R102：经典榜那句筛选说明由纯函数给，app.js 不再自己写
 
   // app.js 里不许再出现**任何**用户可见文案（它只负责把纯函数给的字符串贴到 DOM 上）。
   // 注释里提到产品口径不算文案，所以只扫代码部分。
-  // 注意：app.js 里那个 alert 文案带 https:// 链接，所以必须用 stripComments —— 逐行删 // 的写法
-  // 会把 "//github.com…" 之后的正确代码也当注释删掉（我曾因此得到过假的"通过"）。
+  // 必须用 stripComments 而不是随手一句正则：R106 就是这条断言的前车之鉴——当时那个正则把
+  // 字符串里的 `//` 当成注释开头，删掉了后面的真代码，于是"扫不到"被当成了"没问题"。
   const appCode = stripComments(read('app.js'));
   for (const copy of ['不参与评分', '一键就能玩', '过线之后', '最值得先看', '新手能玩', '本周飙升', '经典必玩', '口碑']) {
     assert.ok(!appCode.includes(copy), `app.js 不该自己写显示文案：${copy}`);
@@ -536,7 +613,7 @@ test('R102：经典榜那句筛选说明由纯函数给，app.js 不再自己写
 
 test('R102：app.js 只剩取数与写 DOM，不再有"根据数据挑显示内容"的分支', () => {
   const js = read('app.js');
-  const code = js.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  const code = stripComments(js);
   // 这些是显示决策的载体：挑文案、拼提示、算可见条目——都应该住在 render.mjs 里。
   for (const forbidden of ['missingDateNotice', 'boardNotice', 'filteredOutNotice', 'noDataNotice',
     'dataErrorNotice', 'loadingNotice', 'cardDetailHint', 'difficultyFilterHint', 'passesFilters']) {
@@ -589,7 +666,7 @@ test('R105：全部用户可见文案都不得承诺"点开就能看安装说明
   const promisedDetail = /点开[^。；\n：]{0,20}(可以看到|就能看到|可查看|即可看到)[^。；\n]{0,20}(详细介绍|详细说明)/;
 
   for (const [name, source] of Object.entries(sources)) {
-    const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+    const code = stripComments(source);
     assert.ok(!promised.test(code), `${name} 里承诺了点开就能看安装说明`);
     assert.ok(!promisedDetail.test(code), `${name} 里承诺了点开就能看详细介绍`);
   }
@@ -599,18 +676,481 @@ test('R105：全部用户可见文案都不得承诺"点开就能看安装说明
   const hintHtml = view.hints.map((h) => h.html).join('\n');
   assert.ok(!promised.test(hintHtml), '提示语里承诺了点开就能看安装说明');
   assert.ok(!promisedDetail.test(hintHtml), '提示语里承诺了点开就能看详细介绍');
-  assert.match(hintHtml, /还在做/, '要如实说清"还在做"');
   assert.match(hintHtml, /prepare\.html/, '新手准备页的入口要在');
+  assert.match(hintHtml, /点开卡片/, '要如实说清点开卡片会发生什么（抽屉已经做好了）');
+  assert.ok(!/还在做|下一个版本/.test(hintHtml), '抽屉已经做好了，提示语不能再写"还在做"');
 
   const card = itemCard({ boardId: 'weekly', item: item({}) });
   assert.ok(!promised.test(card), '卡片上仍在承诺点开就能装');
   assert.ok(!promisedDetail.test(card), '卡片上仍在承诺点开就能看详情');
 
-  // 承认现状：点击时给的那句提示才是实话（Task 17 接上抽屉后，这几条断言要一起改）。
-  assert.match(read('app.js'), /下一个版本/);
+  // Task 17 接上了抽屉：卡片上那句"还在做"必须换成此刻成立的实话（点击真的会打开详情）。
+  assert.match(card, /详情/, '卡片要告诉用户点开有详情');
+  assert.ok(!/还在做|下一个版本/.test(card), '抽屉已经做好了，卡片上不能再挂着"还在做"');
+  assert.match(hintsOf('weekly'), /点开卡片/, '列表上方的说明要与"点开有抽屉"这件事一致');
 });
 
-// ---------- ⑩ 静态服务器真的把页面送到浏览器 ----------
+// ---------- ⑪ Task 17：详情抽屉（R25 / R64 / R78 / 置信度 / 转义） ----------
+
+/**
+ * 造一份"预生成好的"安装向导（R78：真实形状来自 collector 的 buildInstallGuide，
+ * 三条步骤 + 五条常见问题；这里逐字用它的模板）。
+ */
+function installGuide(extra = {}) {
+  const packet = 'markitdown-cli';
+  const command = `npx ${packet}`;
+  return {
+    kind: 'npmBinWin',
+    command,
+    downloadUrl: null,
+    evidence: 'repository',
+    verified: true,
+    requiresPython: null,
+    chineseDoc: false,
+    hasChinese: true,
+    localizedFiles: [],
+    notes: [],
+    steps: [
+      { title: '第 1 步 · 你需要先准备什么', body: '需要先装一个免费的 Node.js（它让电脑能运行别人写好的命令行小程序）。没装过就打开「新手准备页」，照着做一遍，大约十分钟。' },
+      {
+        title: '第 2 步 · 复制下面这一行，粘到命令行窗口里，按回车',
+        body: `把下面这一行整段复制过去（连空格一起），粘到命令行窗口里，按回车，等它自己跑完：\n${command}`,
+        command,
+      },
+      { title: '第 3 步 · 怎么用', body: `装好之后，在命令行窗口里敲 npx ${packet} 就能启动它（第一次会问你要不要下载，直接回车）。它一般会自己在窗口里打印出怎么用。` },
+    ],
+    faq: [
+      { q: '装错了、不想要了，怎么卸载？', a: `在命令行窗口里敲 npm uninstall -g ${packet} 就能删掉。` },
+      { q: '「命令行」是什么？在哪里打开？', a: '按键盘上的 Windows 键，输入 cmd 或 PowerShell，回车就弹出那个黑色窗口。' },
+      { q: '这些东西要花钱吗？会不会有毒？', a: '都是公开源代码的项目，从上面给的官方地址下载一般没问题。' },
+    ],
+    ...extra,
+  };
+}
+
+/** 造一条带完整安装向导的条目。 */
+const drawerItem = (extra = {}) => item({
+  grade: 'yellow',
+  hasChinese: true,
+  install: installGuide(),
+  ...extra,
+});
+
+/** 抽一段 HTML 里的可见文字（去掉标签与属性，用来断言"用户读到的字"）。 */
+const visibleText = (html) => String(html).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** 列表上方的提示语（用来断言"点开卡片会发生什么"这类文案）。 */
+const hintsOf = (boardId) => buildBoardView({ items: threeItems(), boardId, daily: daily() }).hints.map((h) => h.html).join('\n');
+
+test('R78：抽屉渲染 JSON 里预生成的三步与常见问题，且不重写向导', () => {
+  const item1 = drawerItem({ stars: 4321, pushedAt: '2026-10-08T00:00:00Z', starsGained7d: 2500, confidence: 'reported', velocitySource: 'trending' });
+  const guide = item1.install;
+  const html = detailDrawer({ boardId: 'weekly', item: item1 });
+
+  // 三步逐条照 render：标题与正文都在，而且正文里的换行也保住了（第 2 步正文含命令）。
+  assert.equal((html.match(/第 \d 步 ·/g) ?? []).length, 3);
+  for (const step of guide.steps) {
+    assert.ok(html.includes(step.title), `少了这一步：${step.title}`);
+    assert.ok(visibleText(html).includes(step.body.split('\n')[0]), '这一步的正文没渲染出来');
+  }
+  // 常见问题（≥3 条）也要渲染：它们是 JSON 里带来的，不是浏览器里编的。
+  assert.ok(guide.faq.length >= 3);
+  for (const entry of guide.faq) {
+    assert.ok(html.includes(entry.q), `少了这个问题：${entry.q}`);
+    assert.ok(html.includes(entry.a), `少了这个答案：${entry.a}`);
+  }
+  assert.match(html, /常见问题/);
+
+  // 命令出现且**只出现一次**（正文里也有一份，渲染时不能重复贴）。
+  assert.equal((html.match(/<code class="install-command-text">npx markitdown-cli<\/code>/g) ?? []).length, 1);
+  // 可复制的方块只有一个：同一行命令挂三个方块，用户会以为是三条不同的命令。
+  // （正文里"装好之后敲 npx …"那种叙述性提到不算方块，所以这里数的是方块本身。）
+  assert.equal((html.match(/class="install-command"/g) ?? []).length, 1);
+  // 复制按钮与它的取词元素都在；命令框有专门的 class（app.js 靠它取文本）。
+  assert.match(html, /data-copy-command/);
+  assert.match(html, /data-copy-source/);
+  assert.match(html, /class="install-command-text"/);
+  // 没有下载地址时不给下载按钮（给了就是一个死链接）。
+  assert.ok(!html.includes('data-download'));
+
+  // 渲染层不许自己造向导文案：任一来源模板的句子只要**在 JS 源码里逐字出现**，
+  // 就说明有人把服务端模板抄进了浏览器（于是就有了第二个真相源，两处早晚会不一致）。
+  const source = read('render.mjs');
+  const templates = [
+    '需要先装一个免费的 Node.js',
+    '把下面这一行整段复制过去',
+    '装好之后，在命令行窗口里敲',
+    '按键盘上的 Windows 键，输入 cmd 或 PowerShell',
+    '第一次会问你要不要下载',
+  ];
+  for (const sentence of templates) {
+    assert.ok(!source.includes(sentence), `render.mjs 里抄了服务端模板：${sentence}`);
+  }
+});
+
+test('R78：有下载地址时给下载按钮，且只在该有的时候给', () => {
+  const win = drawerItem({
+    install: installGuide({
+      kind: 'releaseWindows',
+      command: null,
+      downloadUrl: 'https://github.com/demo/tool/releases/download/v1/tool-setup.exe',
+      steps: [
+        { title: '第 1 步 · 你需要先准备什么', body: '有一台 Windows 电脑就够了，别的什么都不用装。' },
+        { title: '第 2 步 · 点下面的链接，把安装包下载下来', body: '点这个链接下载：https://github.com/demo/tool/releases/download/v1/tool-setup.exe\n下载完是一个安装包，双击它，然后一路点"下一步"就装好了。', downloadUrl: 'https://github.com/demo/tool/releases/download/v1/tool-setup.exe' },
+        { title: '第 3 步 · 怎么用', body: '装好之后，按键盘上的 Windows 键，输入它的名字就能搜到并打开。' },
+      ],
+    }),
+  });
+  const html = detailDrawer({ boardId: 'newbie', item: win });
+  assert.match(html, /data-download/);
+  assert.match(html, /下载/);
+  assert.match(html, /releases\/download\/v1\/tool-setup\.exe/);
+});
+
+test('R25：经典榜的抽屉不画三轴分数条、不说"为什么上榜"', () => {
+  const classic = drawerItem({
+    stars: 123456,
+    pushedAt: '2026-10-08T00:00:00Z',
+    scores: { hot: 45, reputation: 30, runnable: 25, total: 100 },
+    reasons: ['总收藏人数多，很多人早就用过'],
+  });
+  const html = detailDrawer({ boardId: 'classic', item: classic });
+  assert.ok(!html.includes('score-bars'), '经典榜不参与三轴评分，不能画分数条');
+  assert.ok(!html.includes('为什么上榜'), '经典榜没有三轴分数，不能有"为什么上榜"这一节');
+  assert.ok(!html.includes('bar-fill'), '分数条的任何零件都不该出现');
+  // 取而代之：它真正依据的两件事 + 一句说明（R25）。
+  const text = visibleText(html);
+  assert.match(text, /总收藏人数/);
+  assert.match(text, /最后更新时间/);
+  assert.match(text, /不参与[^。]{0,20}评分/);
+  assert.ok(!text.includes('综合 100 分'), '经典榜不得报综合得分');
+});
+
+test('R25：周榜与新手榜的抽屉才画三轴分数条与理由', () => {
+  const weekly = drawerItem({
+    scores: { hot: 45, reputation: 24.5, runnable: 25, total: 94.5 },
+    reasons: ['本周新增收藏约 2,500（估算）', '有中文说明，照着做不容易卡住'],
+  });
+  const html = detailDrawer({ boardId: 'weekly', item: weekly });
+  assert.match(html, /为什么上榜/);
+  assert.match(html, /score-bars/);
+  for (const axis of ['热度', '口碑', '新手友好']) assert.ok(html.includes(axis), `少了 ${axis} 这一轴`);
+  assert.match(html, /本周新增收藏约 2,500（估算）/);
+  assert.match(html, /有中文说明，照着做不容易卡住/);
+  // 新手榜同样有（同一个"按分数排"的家族）。
+  assert.match(detailDrawer({ boardId: 'newbie', item: weekly }), /为什么上榜/);
+});
+
+test('置信度在抽屉里同样照实标注，没问到就不许写成一个 0', () => {
+  const cases = [
+    [{ starsGained7d: 1234, confidence: 'measured', velocitySource: 'history-json' }, /1,234（实测）/],
+    [{ starsGained7d: 1200, confidence: 'reported', velocitySource: 'trending' }, /1,200（GitHub 官方数据）/],
+    [{ starsGained7d: 900, confidence: 'estimated', velocitySource: 'events' }, /约 900（估算）/],
+  ];
+  for (const [velocity, expected] of cases) {
+    const html = detailDrawer({ boardId: 'weekly', item: drawerItem(velocity) });
+    assert.match(html, expected);
+  }
+
+  // velocitySource 为 'none' = 我们根本没问到：不许出现"新增收藏 0"，要说我们没查到。
+  const unknown = detailDrawer({ boardId: 'weekly', item: drawerItem({ starsGained7d: 0, starsGained3d: null, confidence: 'estimated', velocitySource: 'none' }) });
+  assert.match(unknown, /没有查到/);
+  assert.ok(!unknown.includes('新增收藏 0'), '没问到的时候不得渲染成新增 0');
+  assert.ok(!/1,?0?（实测）|（估算）/.test(unknown));
+});
+
+test('R64：非中文文档的条目在抽屉里也绝不显示「有中文说明」', () => {
+  const ja = item({ grade: 'yellow', hasChinese: false, localizedFiles: ['README.ja.md'], chineseDoc: true, install: installGuide({ hasChinese: false, chineseDoc: true, localizedFiles: ['README.ja.md'] }) });
+  const html = detailDrawer({ boardId: 'weekly', item: ja });
+  assert.ok(!html.includes(CHINESE_BADGE), '没有中文就不许给中文徽章');
+  assert.ok(html.includes(LOCALIZED_ONLY_BADGE), '有本地化文档就要如实说（非中文）');
+  assert.ok(!visibleText(html).includes(CHINESE_BADGE));
+});
+
+test('抽屉不泄露内部字段名与取证英文值', () => {
+  const nasty = drawerItem({
+    evidence: 'project_urls',
+    install: installGuide({ evidence: 'project_urls', notes: ['内部备注不该出现在界面上'] }),
+    velocity: { gained7d: 900, gained3d: 120, confidence: 'estimated', source: 'events', level: 4 },
+  });
+  const html = detailDrawer({ boardId: 'weekly', item: nasty });
+  for (const leak of ['project_urls', 'ownerRepo', 'starsGained7d', 'velocitySource', 'chineseDoc', 'localizedFiles', 'npmBinWin', 'internal', 'install:']) {
+    assert.ok(!html.includes(leak), `抽屉里泄露了内部取值：${leak}`);
+  }
+  assert.match(html, /这个包的官方页面里列着这个项目。/, '取证来源要给中文说法');
+});
+
+test('R98：抽屉里来自 JSON 的每一个字符串都先转义', () => {
+  const guide = installGuide({ command: 'npx "<b>坏</b>"', steps: [], faq: [] });
+  const hostile = {
+    ownerRepo: 'demo/"><b>坏</b>',
+    name: '"><img src=x onerror=alert(1)>',
+    description: '</p><script>alert(1)</script>',
+    language: '"><b>坏</b>',
+    license: '<b>坏</b>',
+    score: '"><b>坏</b>',
+    reason: '<b>坏</b>',
+    q: '"><b>坏</b>',
+    a: '</li><script>alert(1)</script>',
+  };
+  const payload = {
+    ...drawerItem({
+      ownerRepo: hostile.ownerRepo,
+      name: hostile.name,
+      description: hostile.description,
+      language: hostile.language,
+      license: hostile.license,
+      reasons: [hostile.reason],
+      scores: { hot: 45, reputation: 30, runnable: 25, total: 100 },
+    }),
+    install: {
+      ...guide,
+      steps: [
+        { title: `第 1 步 · ${hostile.license}`, body: hostile.a },
+        { title: `第 2 步 · ${hostile.license}`, body: `把这一行粘过去：\n${guide.command}`, command: guide.command },
+        { title: `第 3 步 · ${hostile.license}`, body: hostile.a },
+      ],
+      faq: [{ q: hostile.q, a: hostile.a }],
+    },
+  };
+  const html = detailDrawer({ boardId: 'weekly', item: payload });
+  // 注意别拿裸标签去扫：`</li>` 这种写法在**结构本身**里就有（向导每一步都是一个列表项），
+  // 所以这里找的是"注入进来的那个组合"，而不是那个标签字面量。
+  for (const raw of ['<img', '<script', '<b>', '</li><script', '" onerror=', '"><img']) {
+    assert.ok(!html.includes(raw), `原始标签漏进了抽屉：${raw}`);
+  }
+  assert.match(html, /&lt;img/);
+  assert.match(html, /&quot;/);
+});
+
+test('抽屉对缺字段、坏形状的条目一律不抛错（数据文件是外部输入）', () => {
+  assert.doesNotThrow(() => detailDrawer());
+  assert.doesNotThrow(() => detailDrawer({}));
+  assert.doesNotThrow(() => detailDrawer({ boardId: 'weekly', item: null }));
+  assert.doesNotThrow(() => detailDrawer({ boardId: 'weekly', item: { install: '不是对象' } }));
+  assert.doesNotThrow(() => detailDrawer({ boardId: 'weekly', item: { install: { steps: '不是数组', faq: 42 } } }));
+  const noGuide = detailDrawer({ boardId: 'weekly', item: item({ ownerRepo: 'demo/tool' }) });
+  assert.match(noGuide, /demo\/tool/, '项目全名还是要显示');
+  assert.match(noGuide, /prepare\.html/, '没有向导时要指路到新手准备页');
+  assert.match(noGuide, /打开项目主页/);
+  // 空向导时不留一个空壳标题。
+  const emptySteps = detailDrawer({ boardId: 'weekly', item: item({ install: { steps: [], faq: [] } }) });
+  assert.ok(!emptySteps.includes('第 1 步'));
+});
+
+test('R102：抽屉的每一句文案都来自纯函数层，app.js 只负责开关与复制', () => {
+  const js = read('app.js');
+  const code = stripComments(js);
+  // 它必须真的把抽屉接上（导入 + 调用 + 关闭 + 键盘），而不是留一句注释。
+  assert.match(js, /detailDrawer\(/);
+  assert.match(js, /data-drawer-close/);
+  assert.match(js, /Escape/);
+  assert.ok(!/drawer\.innerHTML\s*=\s*['"`]/.test(code), 'app.js 里不许手写一段抽屉 HTML');
+  assert.ok(!/navigator\.clipboard\.writeText\(\s*['"`]/.test(code), '复制的内容要照 render.mjs 给的选择器从页面上取，不许在 app.js 里拼');
+  assert.match(js, /data-copy-source/);
+  // 反面对照：向导文案本身住在 JSON 里，两个 JS 文件都不许逐字抄一份。
+  for (const [name, source] of [['app.js', js], ['render.mjs', read('render.mjs')]]) {
+    assert.ok(!source.includes('需要先装一个免费的 Node.js'), `${name} 里抄了服务端向导模板`);
+  }
+});
+
+test('首页自带一个隐藏的抽屉壳：没打开时看不见，也不出现在无障碍树里', () => {
+  const html = read('index.html');
+  assert.match(html, /id="drawer"/);
+  // 只认 hidden 属性：不依赖 :has()（有些浏览器不认，没有 :has 时样式会失效）。
+  assert.match(html, /id="drawer"[^>]*hidden/);
+  assert.match(html, /aria-hidden="true"/);
+  assert.doesNotMatch(html, /<dialog/i, '不用 <dialog>：它在较老的浏览器里不可用（本项目没有垫片）');
+  assert.doesNotMatch(html, /tabindex="0"[^>]*id="drawer"|id="drawer"[^>]*tabindex="0"/, '抽屉本身不进 Tab 顺序，焦点留在卡片上');
+});
+
+// ---------- ⑫ prepare.html：新手准备页（Link 已经指向它，必须真的能教人上手） ----------
+
+test('新手准备页教人打开命令行、确认 Node/Python、把命令粘到哪里', () => {
+  const html = read('prepare.html');
+  const text = visibleText(html);
+  // 怎么打开命令行（Windows 两种走法）。
+  assert.match(text, /PowerShell/);
+  assert.match(text, /命令行/);
+  assert.match(text, /Windows 键/);
+  // 怎么知道装没装 Node / Python（给命令 + 两种结果怎么说）。
+  assert.match(text, /node -v/);
+  assert.match(text, /python --version/);
+  assert.match(text, /nodejs\.org/);
+  // 命令粘到哪里 + 粘完怎么知道成功了。
+  assert.match(text, /粘贴/);
+  assert.match(text, /按回车/);
+  assert.match(text, /报错/);
+  // 回到榜单与三项命令行的基本安全提醒。
+  assert.match(html, /href="index\.html"/);
+  assert.match(text, /不要/);
+  // 页面本身不许出现行话，也不引用还不存在的页面（about.html 是 Task 18 的）。
+  assert.ok(!/\bstar\b|\bfork\b|\bissue\b/i.test(html));
+  assert.doesNotMatch(html, /about\.html/);
+});
+
+test('prepare.html 与首页同源共用 style.css（静态服务器直接送，没有服务端逻辑）', async () => {
+  assert.match(read('prepare.html'), /<link rel="stylesheet" href="style\.css">/);
+  const server = createStaticServer({ root: 'public' });
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/prepare.html`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /text\/html/);
+    const html = await response.text();
+    assert.match(html, /命令行/);
+    assert.match(html, /PowerShell/);
+  } finally {
+    await new Promise((done) => {
+      server.closeAllConnections();
+      server.close(done);
+    });
+  }
+});
+
+test('抽屉与准备页都已就位，文案指向的页面真实存在（不留死链）', () => {
+  const files = new Set(readdirSync(new URL('../public', import.meta.url)));
+  // 只认**页面里真正的 href**，不认"这段源码里提过这个文件名"（本文件自己的断言文字里也会提到它，
+  // 拿字符串包含来判断等于在测自己写的那句话，不是在测页面）。
+  const surfaces = [read('index.html'), read('render.mjs'), read('prepare.html')].join('\n');
+  const links = [...surfaces.matchAll(/href="([^"#?]+\.html)/g)].map((match) => match[1]);
+  assert.ok(links.includes('prepare.html'), '新手准备页的入口要在页面上');
+  for (const link of new Set(links)) {
+    // about.html 是 Task 18 的东西：现在页脚已经指着它，但本任务不负责建它。
+    if (link === 'about.html') continue;
+    assert.ok(files.has(link), `页面指向了不存在的 ${link}`);
+  }
+  assert.ok(files.has('prepare.html'));
+});
+
+// ---------- ⑬ R106 / R107 / R108：三条已存在的缺陷 ----------
+
+test('R106：去注释助手不得删掉字符串里的真代码', () => {
+  // 用一个受控样本钉住病根：`https://` 和字符串里的 `//` 都不是注释开头。
+  const sample = [
+    "const url = 'https://github.com/demo'; // 这一行末尾这句才是注释",
+    'const link = `href="https://github.com/${x}"`;',
+    "const rel = 'noreferrer noopener';",
+    '/* 整块注释',
+    '   也是注释 */',
+    "const keep = '// 不是注释';",
+  ].join('\n');
+  const stripped = stripComments(sample);
+  assert.ok(stripped.includes("'https://github.com/demo'"), '字符串里的网址被删了');
+  assert.ok(stripped.includes('模板串里的网址') || stripped.includes('https://github.com/${x}'), '模板串里的网址被删了');
+  assert.ok(stripped.includes('noreferrer'), '字符串里的取值被删了');
+  assert.ok(stripped.includes("'// 不是注释'"), '字符串里的双斜杠被当成了注释');
+  assert.ok(!stripped.includes('这一行末尾这句才是注释'), '行尾注释要删掉');
+  // 整块注释要删掉：`</` 后面跟一段注释，再看注释里的字还在不在。
+  assert.ok(!stripped.includes('整块注释'), '整块注释要删掉');
+
+  // 在**真实的 render.mjs** 上量：这三个词各出现几次，去注释后必须一次不少。
+  const source = read('render.mjs');
+  const counts = (text, word) => text.split(word).length - 1;
+  for (const word of ['noreferrer', 'noopener', 'https://github.com']) {
+    assert.ok(counts(source, word) >= 1, `${word} 在原文里就该有`);
+    assert.equal(counts(stripComments(source), word), counts(source, word), `${word} 被去注释助手删掉了`);
+  }
+
+  // 反面对照：注释里的行话原词确实被删掉了（否则"注释也扫"那条会误判）。
+  assert.ok(source.includes('行话禁令'));
+  assert.ok(!stripComments(source).includes('行话禁令'));
+
+  // 嵌套模板串也要认（真实缺陷就在这里：只用一个"在不在字符串里"的变量时，
+  // 内层那个反引号会被当成外层模板串结束，于是 `https://` 又被当注释）。
+  const nested = 'const row = `<ul>${items.map((x) => `<li>${x}</li>`).join("")}</ul>`; // 尾巴';
+  const nestedOut = stripComments(nested);
+  assert.ok(!nestedOut.includes('尾巴'), '行尾注释要删掉');
+  assert.equal((nestedOut.match(/`/g) ?? []).length, (nested.match(/`/g) ?? []).length, '模板串的反引号被删了');
+  assert.ok(nestedOut.includes('`<li>${x}</li>`'), '嵌套模板串的内容被删了');
+
+  // 整个测试文件里不许再有那句中招的行内正则（有的话，别的用例还会继续空转）。
+  // 找的是"把注释删掉之后剩下的真代码"，所以先把本文件的注释摘掉再找；
+  // 也不能用裸文本匹配——文件里那句解释来龙去脉的注释本身就写着这个写法。
+  const self = readFileSync(new URL('./page-content.test.mjs', import.meta.url), 'utf8');
+  const codeOnly = stripComments(self);
+  assert.ok(!codeOnly.includes('replace(/\\/\\*'), '还有用例在用会被字符串骗倒的行内正则');
+});
+
+test('R107：数据形状不对时，建议必须与用户当下能做的事一致', () => {
+  // 只有一天数据时日期选择器是隐藏的：不能让人"换一天看看"。
+  const oneDate = dataErrorNotice(1);
+  assert.match(oneDate, /读不出来/);
+  assert.ok(!oneDate.includes('换一天'), '只有一天数据时不能建议换一天');
+  assert.ok(!oneDate.includes('日期选择器'), '选择器没显示，就不能提它');
+  assert.match(oneDate, /npm run collect --offline/);
+
+  // 有两天以上时才提日期选择器。
+  const manyDates = dataErrorNotice(2);
+  assert.match(manyDates, /换一天/);
+  assert.match(manyDates, /日期选择器/);
+  // 参数拿不准（不传 / 不是数字）时按保守的那一边说。
+  assert.ok(!dataErrorNotice().includes('换一天'));
+  assert.ok(!dataErrorNotice('2').includes('换一天'));
+  // 只有一天时要把"没有别的日期可换"说明白，而不是含糊带过。
+  assert.match(dataErrorNotice(1), /没有别的日期可换/);
+
+  // buildBoardView 真的把这个判断算进去了（不是只在测试里调了一下函数）。
+  const broken = { date: '2026-10-10', degraded: false, boards: '不是数组' };
+  const oneDay = noticeOf(buildBoardView({ boardId: 'weekly', items: [], daily: broken, dates: ['2026-10-10'] }), 'broken');
+  assert.ok(!oneDay.html.includes('换一天'));
+  const twoDays = noticeOf(buildBoardView({ boardId: 'weekly', items: [], daily: broken, dates: ['2026-10-10', '2026-10-09'] }), 'broken');
+  assert.match(twoDays.html, /换一天/);
+});
+
+test('R108：语言筛选的回退发生在算视图之前，不会先画一份过期列表', () => {
+  // 用户在某一天选了"没有标注语言"，然后切到没有这类条目的另一天。
+  const gone = buildBoardView({ items: threeItems(), boardId: 'weekly', filters: { language: '__unknown__' } });
+  assert.equal(gone.languageSelectionValid, false, '选项没了，选择必须失效');
+  assert.equal(gone.visibleCount, 0, '失效的选择算出来的视图确实是空的（所以顺序很重要）');
+
+  // 忠实模拟 app.js 那次渲染：**先**回退、**再**算视图、**最后**才画。以前是"先算先画、再回退"，
+  // 于是用户看到的是"已重置的控件 + 空列表"，而且要等到下一次点击才恢复。
+  const state = { filters: { easy: false, chinese: false, language: '__unknown__' } };
+  const items = threeItems();
+  const paintOrder = [];
+  const paint = () => paintOrder.push('paint');
+  const compute = () => {
+    paintOrder.push('compute');
+    return buildBoardView({ items, boardId: 'weekly', filters: state.filters });
+  };
+
+  // ① 先回退（render.mjs 给的事实函数）
+  const pre = buildBoardView({ items, boardId: 'weekly', filters: state.filters });
+  if (pre.languageSelectionValid !== true) state.filters.language = '';
+  // ② 再算视图并画
+  const view = compute();
+  paint();
+  assert.deepEqual(paintOrder, ['compute', 'paint']);
+
+  assert.equal(state.filters.language, '');
+  assert.equal(view.languageSelectionValid, true);
+  assert.equal(view.visibleCount, 3, '回退后这一次渲染就该显示全部条目，而不是空列表');
+  assert.equal(view.items.length, 3);
+  assert.equal(noticeOf(view, 'filtered-out'), null);
+
+  // app.js 必须真的按这个顺序写（先回退、后算、后渲染）。
+  const code = stripComments(read('app.js'));
+  const fallbackAt = code.search(/languageSelectionIsValid\s*\(/);
+  const computeAt = code.search(/function computeView\s*\(/);
+  // 画榜单的那个函数叫 drawBoard：它只是"把视图写到 DOM 上"。
+  const drawAt = code.search(/function drawBoard\s*\(/);
+  assert.ok(fallbackAt > -1, 'app.js 必须消费这个事实');
+  assert.ok(computeAt > -1);
+  assert.ok(drawAt > -1);
+  // 事实与判断都来自 render.mjs：app.js 不自己算语言清单（那会变成第二套口径）。
+  const hasLanguageListComputation = /new Set\([^)]*\.map\(\s*\(item\)\s*=>\s*item\?\.language/.test(code);
+  assert.equal(hasLanguageListComputation, false, 'app.js 不许自己算语言清单');
+  // 回退那一行在 computeView 里面（也就是算视图之前），而视图是在 drawBoard 里算的，
+  // 所以"回退 → 算 → 画"这个顺序在源码里就是事实，不是靠注释声明的。
+  const computeBody = code.slice(computeAt, drawAt);
+  assert.ok(computeBody.includes('dropInvalidLanguageSelection('), '回退要发生在算视图之前');
+  // 回退的实现本身要用纯函数给的那个判断（不能自己写一套"这个语言还在不在"的比较）。
+  const fallbackEnd = code.indexOf('function computeView');
+  assert.match(code.slice(fallbackAt, fallbackEnd), /languageSelectionIsValid\(/, '判断本身要用纯函数给的那一个');
+});
+
+// ---------- ⑭ 静态服务器真的把页面送到浏览器 ----------
 
 test('静态服务器提供的首页确实带着三个榜签', async () => {
   const server = createStaticServer({ root: 'public' });

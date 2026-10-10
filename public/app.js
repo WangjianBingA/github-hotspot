@@ -16,10 +16,15 @@
 // 把点击接到抽屉上即可，不必重写取数与渲染流程。
 
 import {
+  COPY_DONE_TEXT,
+  COPY_FAIL_TEXT,
   buildBoardView,
+  detailDrawer,
   escapeAttr,
   escapeHtml,
   itemCard,
+  languageFacts,
+  languageSelectionIsValid,
 } from './render.mjs';
 
 // 数据文件放在页面旁边（同源同目录），所以用相对地址就够了。
@@ -106,16 +111,34 @@ function currentBoardTitle(boardId) {
 }
 
 /**
+ * 语言筛选的回退（R103 / R108）：**必须在算视图之前**做。
+ * 中文下拉里那个"没有标注语言"的选项（以及某种语言本身）在不同日期可能不存在，
+ * 那时 `select.value` 会停在一个已经不在选项里的值上——控件看着空白、筛选却还在生效。
+ * 顺序错了就会先画一份过期列表（用户看到"控件已重置 + 空列表"，要再点一下才恢复）；
+ * 所以这里先问纯函数、把无效的选择改回"全部语言"，之后才算视图、才画。
+ * 事实清单（languageFacts）与判断（languageSelectionIsValid）都来自 render.mjs：
+ * 本文件不自己算清单，也就不会与 buildBoardView 各说各话。
+ * @param {object[]} items 当前这一榜的条目
+ */
+function dropInvalidLanguageSelection(items) {
+  if (languageSelectionIsValid(state.filters.language, languageFacts(items))) return;
+  state.filters.language = '';
+}
+
+/**
  * 把"这一屏该显示什么"算出来（R93 / R102）。
  * 这里是**唯一**把状态交给渲染层的地方：通知、语言清单、提示语全在 buildBoardView 里决定，
  * 本文件不做任何"根据数据挑一条文案"的判断（R102）。
+ * R108：进门第一件事是回退无效的语言筛选——顺序在这里，不在渲染之后。
  * @returns {object} buildBoardView 的结果
  */
 function computeView() {
+  const items = currentItems(state.boardId);
+  dropInvalidLanguageSelection(items);
   return buildBoardView({
     boardId: state.boardId,
     boardTitle: currentBoardTitle(state.boardId),
-    items: currentItems(state.boardId),
+    items,
     filters: state.filters,
     daily: currentDaily(),
     date: state.date,
@@ -128,7 +151,8 @@ function computeView() {
  * 语言下拉：选项来自 view，是否有效也由 view 判定（R95 / R103）。
  * 曾经的缺陷：这里把"没有标注语言"当成永远有效，于是从有未标注语言的那天切到没有的另一天时，
  * 选项没了、`select.value` 却停在那个值上——控件显示空白、筛选仍在生效，用户看不到任何生效中的筛选。
- * 现在无效的选择一律回退成"全部语言"（state 与 DOM 同时回退），并在下面断言里钉住。
+ * 现在无效的选择在 computeView 里**画之前**就已经回退成"全部语言"；这里再守一道，
+ * 免得将来有人加了新的入口、绕过那次回退（守住的是同一件事，不是第二套判断）。
  */
 function renderLanguageOptions(view) {
   const select = el('filter-language');
@@ -214,16 +238,17 @@ function renderControls() {
  *
  * R102：这里没有任何"根据数据挑一条文案"的分支——通知列表与说明语都来自 view。
  */
-function renderBoard() {
+function drawBoard() {
   const container = el('board');
   if (container === null) return;
   const view = computeView();
   state.view = view;
 
-  const cards = view.items.map((item) => {
+  const cards = view.items.map((item, index) => {
     // 项目全名要进 HTML 属性，所以先把引号之类转义掉：数据文件是外部输入，不能假设它一定干净。
     const full = escapeAttr(typeof item?.ownerRepo === 'string' ? item.ownerRepo : '');
-    return `<article class="card" data-board="${escapeAttr(state.boardId)}" data-full="${full}" tabindex="0">`
+    // data-index 是"点开时回到哪一条"的钥匙：用序号而不是项目名，省掉在名字上做转义/反转义的来回。
+    return `<article class="card" data-board="${escapeAttr(state.boardId)}" data-index="${index}" data-full="${full}" tabindex="0">`
       + itemCard({ boardId: state.boardId, item })
       + '</article>';
   }).join('');
@@ -238,22 +263,182 @@ function renderBoard() {
   renderStats(view);
   renderLanguageOptions(view);
   renderControls();
-  bindCardHints(container);
+  bindCards(container);
+}
+
+// ---------- 详情抽屉（Task 17） ----------
+//
+// 本文件在这里只做三件事：**开关**、**把 render.mjs 算好的内容贴到 DOM 上**、**复制命令**。
+// 抽屉里显示什么（三步向导、为什么上榜、经典榜那一节、置信度标注）全部由 detailDrawer 决定，
+// 所以那些判断都能在没有浏览器的环境里被断言（R93 / R102）。
+// 注意命令文本是从页面上那个 `<code>` 里读的（`data-copy-source` 指过去），
+// 所以 app.js 连数据字段名都不用知道。
+
+/** 上一次把焦点放在哪（关抽屉时还回去，键盘用户不会被丢在页面顶部）。 */
+let lastFocused = null;
+
+/** 抽屉壳（index.html 里那个 hidden 的 section）。 */
+const drawerEl = () => el('drawer');
+
+/**
+ * 打开抽屉：把 detailDrawer 给的 HTML 贴进内容区，然后显示它。
+ * `hidden` 与 `aria-hidden` 一起改：只改一个的话，读屏软件仍会念一段看不见的内容。
+ * @param {{ boardId: string, item: object }} input 当前榜与那一条数据
+ */
+function openDrawer({ boardId, item }) {
+  const drawer = drawerEl();
+  const body = el('drawer-body');
+  if (drawer === null || body === null) return;
+  body.innerHTML = detailDrawer({ boardId, item });
+  lastFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  drawer.hidden = false;
+  drawer.setAttribute('aria-hidden', 'false');
+  // 关掉按钮里没有文字（只有一个乘号），所以给它一个能读出来的名字。
+  const close = drawer.querySelector('[data-drawer-close]');
+  if (close instanceof HTMLElement) close.focus();
 }
 
 /**
- * 当前还只是"能点开"的占位交互：真正的详情抽屉由 Task 17 接上。
- * 这里给一句提示，避免用户点了没反应而以为网站坏了。
+ * 关掉抽屉。**不销毁内容**：下次打开会整段重写，所以留着没有风险，
+ * 而且焦点能干净地还回原来那张卡片（不然键盘用户会被丢回页面顶部）。
  */
-function bindCardHints(container) {
+function closeDrawer() {
+  const drawer = drawerEl();
+  if (drawer === null) return;
+  drawer.hidden = true;
+  drawer.setAttribute('aria-hidden', 'true');
+  if (lastFocused !== null && document.contains(lastFocused)) lastFocused.focus();
+  lastFocused = null;
+}
+
+/** 抽屉是不是开着（`hidden` 是唯一事实，不另开一个布尔状态，免得两边走岔）。 */
+function drawerOpen() {
+  const drawer = drawerEl();
+  return drawer !== null && drawer.hidden === false;
+}
+
+/**
+ * 卡片：点一下打开详情；键盘上回车或空格同样能打开。
+ * 卡片里的「打开项目主页」是链接，点它该按链接走——这里不抢链接的点击。
+ * @param {HTMLElement} container 榜单容器
+ */
+function bindCards(container) {
   for (const card of container.querySelectorAll('.card')) {
     card.addEventListener('click', (event) => {
-      // 卡片里的"打开项目主页"是链接，点它该按链接走，不要被这里的提示抢掉。
       if (event.target instanceof Element && event.target.closest('a') !== null) return;
-      window.alert('项目详情（怎么装、为什么上榜）会在下一个版本里点开就能看。现在可以先点「打开项目主页」。');
+      openCardDrawer(card);
+    });
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.target instanceof Element && event.target.closest('a') !== null) return;
+      event.preventDefault();
+      openCardDrawer(card);
     });
   }
 }
+
+/** 从卡片上带着的榜单名与序号，回到当前数据里找出那一条，再交给 openDrawer。 */
+function openCardDrawer(card) {
+  const boardId = typeof card.dataset.board === 'string' && card.dataset.board !== '' ? card.dataset.board : state.boardId;
+  const index = Number.parseInt(card.dataset.index ?? '', 10);
+  const items = currentItems(boardId);
+  // 用序号取那一条（序号是渲染这张卡片时写下的，所以正常情况下一定命中）。
+  // 命不中（例如数据刚好换了、卡片还是旧的）就退回"按项目全名找"，再不行给一个只有名字的条目：
+  // 抽屉照样会给出可用的内容，不会把整页搞崩——数据文件是外部输入，界面必须扛得住形状不对。
+  const byIndex = Number.isInteger(index) && index >= 0 && index < items.length ? items[index] : null;
+  const full = typeof card.dataset.full === 'string' ? card.dataset.full : '';
+  const item = byIndex ?? items.find((candidate) => candidate?.ownerRepo === full) ?? { ownerRepo: full };
+  openDrawer({ boardId, item });
+}
+
+/**
+ * 复制命令到剪贴板。
+ * 优先用浏览器给的剪贴板接口（它只在安全上下文里可用），不行就退回老办法。
+ * 两条路都失败时也要说一句人话，而不是让用户以为按钮坏了。
+ * @param {HTMLElement} button 复制按钮
+ */
+async function copyCommand(button) {
+  const source = button.dataset.copySource ?? '';
+  const targetId = (button.dataset.copyTarget ?? '').replace(/^#/, '');
+  const sourceEl = source === '' ? null : document.querySelector(source);
+  const target = targetId === '' ? null : el(targetId);
+  const text = sourceEl === null ? '' : (sourceEl.textContent ?? '');
+  const done = (message) => {
+    if (target !== null) target.textContent = message;
+  };
+  if (text === '') {
+    done(COPY_FAIL_TEXT);
+    return;
+  }
+  // 剪贴板接口要求安全上下文（https 或 localhost）；预览站点用 http 打开时它根本不存在，
+  // 所以这里不靠 try/catch 兜，而是显式判断，免得在开发者工具里留下一堆没意义的报错。
+  const canUseClipboard = navigator.clipboard !== undefined
+    && typeof navigator.clipboard.writeText === 'function'
+    && window.isSecureContext !== false;
+  if (canUseClipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      done(COPY_DONE_TEXT);
+      return;
+    } catch {
+      // 用户拒绝了权限、或者浏览器就是不给：继续走下面那条老路。
+    }
+  }
+  if (copyWithSelection(text)) {
+    done(COPY_DONE_TEXT);
+    return;
+  }
+  done(COPY_FAIL_TEXT);
+}
+
+/**
+ * 老浏览器的复制办法：临时造一个文本框、选中它、让浏览器执行复制、再删掉。
+ * 复制失败（返回 false）时调用方会说一句"请自己选中那一行按 Ctrl 加 C"。
+ * @param {string} text 要复制的文本
+ * @returns {boolean} 是否成功
+ */
+function copyWithSelection(text) {
+  const area = document.createElement('textarea');
+  // 不能放在视口外（有的浏览器会拒绝复制看不见的内容），所以贴住左上角、尺寸为零地看着不像。
+  area.value = text;
+  area.setAttribute('readonly', 'readonly');
+  area.style.position = 'fixed';
+  area.style.top = '0';
+  area.style.left = '0';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  area.remove();
+  return ok;
+}
+
+// 抽屉上的事件：关掉按钮、点空白处、按 Esc，三条路都能关掉它。
+// 用事件委托挂在 document 上：抽屉内容是每次打开重写的，挂在内容里的监听会跟着内容一起被换掉。
+document.addEventListener('click', (event) => {
+  if (!(event.target instanceof Element)) return;
+  if (event.target.closest('[data-drawer-close]') !== null) {
+    closeDrawer();
+    return;
+  }
+  const copy = event.target.closest('[data-copy-source]');
+  if (copy instanceof HTMLElement) {
+    copyCommand(copy);
+    return;
+  }
+  // 点抽屉外面那层遮罩（不是抽屉内容里）也关掉：手机上这是最顺手的关法。
+  if (drawerOpen() && event.target === drawerEl()) closeDrawer();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !drawerOpen()) return;
+  closeDrawer();
+});
 
 /** 整页只用一句提示时走这里（数据整个读不到、启动就崩了）。 */
 function renderMessage(html) {
@@ -263,17 +448,17 @@ function renderMessage(html) {
   if (stats !== null) stats.textContent = '';
 }
 
-/** 读某一天的榜单数据；成功或失败都交给 renderBoard 决定说哪句话（R101/R104）。 */
+/** 读某一天的榜单数据；成功或失败都交给 drawBoard 决定说哪句话（R101/R104）。 */
 async function loadDaily() {
   // 读的过程中给"正在读取"（由视图函数决定），读完再交给"读不出来"那条提示——
   // 两者是不同的事，不能混成一句（R104）。
   state.dailyLoading = true;
-  renderBoard();
+  drawBoard();
   const payload = await getJson(`${DATA_BASE}${state.date}.json`);
   // 形状不对的也当读不到：让它走"读不出来"的提示，而不是抛错停在"正在读取…"（R101）。
   state.daily = payload !== null && typeof payload === 'object' && Array.isArray(payload.boards) ? payload : null;
   state.dailyLoading = false;
-  renderBoard();
+  drawBoard();
   renderDatePicker();
 }
 
@@ -300,21 +485,21 @@ for (const tab of document.querySelectorAll('.tab')) {
     if (!BOARD_IDS.has(id) || id === state.boardId) return;
     state.boardId = id;
     window.location.hash = id;
-    renderBoard();
+    drawBoard();
   });
 }
 
 el('filter-easy')?.addEventListener('change', (event) => {
   state.filters.easy = event.target.checked;
-  renderBoard();
+  drawBoard();
 });
 el('filter-cn')?.addEventListener('change', (event) => {
   state.filters.chinese = event.target.checked;
-  renderBoard();
+  drawBoard();
 });
 el('filter-language')?.addEventListener('change', (event) => {
   state.filters.language = event.target.value;
-  renderBoard();
+  drawBoard();
 });
 
 // 直接改地址栏的 # 也要跟上（例如从别处点进来一个带榜名的链接）。
@@ -322,7 +507,7 @@ window.addEventListener('hashchange', () => {
   const id = boardFromUrl();
   if (id === '' || id === state.boardId) return;
   state.boardId = id;
-  renderBoard();
+  drawBoard();
 });
 
 // 启动失败（例如数据文件把某个函数喂崩了）也要有话说，而不是永远停在"正在读取榜单数据……"。

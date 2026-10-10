@@ -244,6 +244,25 @@ test('R70：none 档只说"我们没有找到"，不宣称项目"没有现成的
   }
 });
 
+// R72：none 档的卸载说明也不能断言用户的机器状态 —— 我们知道的事实只是"这份向导没让你装东西"。
+test('R72：none 档的卸载说明只说"这份向导没让你装"，不断言用户机器上什么都没有', () => {
+  const inputs = [
+    { label:'什么都没查到', input:{ releases:null, npm:null, pypi:null } },
+    { label:'有同名 npm 包但归属不成立', input:{ npm:{ packageName:'x', repoMatches:false, hasBin:true, osIncludesWin:true } } },
+    { label:'PyPI 归属没确认', input:{ pypi:{ packageName:'x', version:'1.0.0', requiresPython:null } } },
+  ];
+  for (const { label, input } of inputs) {
+    const r = classifyRunnability(input);
+    assert.equal(r.kind, 'none', label);
+    const item = buildInstallGuide(r).faq.find(f => f.q.includes('卸载'));
+    assert.ok(item, label);
+    assert.match(item.a, /这份向导/, label);
+    assert.match(item.a, /项目主页/, label);            // 自己装过的人要有出路
+    assert.doesNotMatch(item.a, /你还没有装/, label);   // 不断言用户机器状态
+    assert.doesNotMatch(item.a, /没有装任何东西/, label);
+  }
+});
+
 // R68：上游 lookupPyPI 没有归属字段，所以在拿到 repoMatches === true 之前，一条 pip install 都不下发。
 test('R68：PyPI 归属没确认（字段缺失或 false）时不下发 pip 命令，该档不成立', () => {
   const missing = { packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10' };

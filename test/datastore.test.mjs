@@ -46,6 +46,15 @@ test('历史可追加且同一天重复追加幂等', () => {
   assert.equal(readHistory(d, '2026-10')[ '2026-10-10']['a/b'].stars, 150);
 });
 
+test('历史同一天重复追加只覆盖本轮写到的仓库，不抹掉其它仓库', () => {
+  const d = dir();
+  appendHistory(d, '2026-10-10', new Map([['a/b', { stars: 100, forks: 5 }], ['c/d', { stars: 50, forks: 2 }]]));
+  appendHistory(d, '2026-10-10', new Map([['a/b', { stars: 150, forks: 6 }]]));
+  const day = readHistory(d, '2026-10')[ '2026-10-10'];
+  assert.equal(day['a/b'].stars, 150);
+  assert.equal(day['c/d'].stars, 50);   // 本轮没写到的仓库必须保留
+});
+
 test('损坏的 JSON 文件不会让读取抛错', () => {
   const d = dir();
   writeFileSync(join(d, '2026-10-09.json'), '{ 这不是合法 JSON');

@@ -114,7 +114,10 @@ export function readSnapshotStars(dataDir, date) {
 }
 
 /**
- * 把某天的快照追加进当月历史档案（同一天重复追加幂等）。
+ * 把某天的快照合并进当月历史档案（幂等）。
+ * 语义与 writeDaily 不同，勿改成整日覆盖：当日榜单文件是"当天最终榜单快照"，重跑整份替换；
+ * 历史档案是护城河数据，按 [日期][ownerRepo] 二级键合并——同一天的同一仓库以本轮为准，
+ * 本轮没写到的仓库保留原值，避免降级重跑（候选池变小）静默抹掉已记录的历史。
  * @param {string} dataDir 数据目录
  * @param {string} date UTC 日期（YYYY-MM-DD）
  * @param {Map<string, {stars: number, forks: number}>} snapshotMap 该天的仓库快照
@@ -125,7 +128,8 @@ export function appendHistory(dataDir, date, snapshotMap) {
   const stored = readJsonSafe(filePath, null);
   // 档案必须始终是"对象"形态，否则用空对象重新开始。
   const history = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
-  history[date] = Object.fromEntries(snapshotMap);
+  const day = history[date] && typeof history[date] === 'object' ? history[date] : {};
+  history[date] = { ...day, ...Object.fromEntries(snapshotMap) };
   writeJsonAtomic(filePath, history);
 }
 

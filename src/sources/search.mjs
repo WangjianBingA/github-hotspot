@@ -10,6 +10,12 @@
 // 所以 discoverActiveRepos 是**候选池提供者**，不是爆涨探测器；
 // 真正的爆涨信号来自 trending 页面（网页自己渲染的 N stars today）与 star-history 端点。
 //
+// 关于限定符（实测结论，务必记住）：GitHub 搜索里**多个限定符之间是 AND 关系，不是 OR**。
+// 所以绝不能在 discoverActiveRepos 的 `pushed:>` 旁边再叠加 `created:>`：
+// 那等于要求"近期有提交 **且** 近期才创建"，会把所有老仓库全部剔除，本函数也就失去了唯一的意义
+// （实测：`pushed:>2026-10-02 stars:>500` 命中 23,684 个仓库，叠加 `created:>2026-10-02` 后只剩 40 个，
+// 且全是一周内新建的）。"发现新项目"这条路由 discoverNewRepos 专门负责，不要在这里重复。
+//
 // 关于 minStars：每个函数自己的默认值（200 / 500 / 100000）是**发现用的预过滤**——
 // 它只用来把搜索查询写窄一点、少捞回一些必被门槛挡掉的仓库。
 // 它**不是**评分门槛：门槛是 score.mjs 里独立的 GATE_MIN_STARS = 200 常量。
@@ -125,7 +131,8 @@ export async function discoverNewRepos(client, { days = DEFAULT_DAYS, minStars =
 
 /**
  * 发现活跃老项目：近 days 天有提交（pushed）且收藏数达预过滤线。
- * 这是候选池提供者而非爆涨探测器，见文件头注释；刚创建但已经活跃的项目也一并纳入。
+ * 这是候选池提供者而非爆涨探测器，见文件头注释。
+ * 查询里**只有** pushed 与 stars 两个限定符：不能再叠加 created，见文件头"关于限定符"。
  * @param {object} client 注入的网络客户端
  * @param {{ days?: number, minStars?: number, now?: Date }} [options]
  * @returns {Promise<Array<object>>} RepoRef 列表
@@ -134,8 +141,8 @@ export async function discoverActiveRepos(client, { days = DEFAULT_DAYS, minStar
   const window = toPositive(days, DEFAULT_DAYS);
   const stars = toPositive(minStars, ACTIVE_MIN_STARS);
   const since = utcDateBefore(now, window);
-  // R37：活跃度只能靠 updated 排序近似——它说明“最近有提交”，不说明“涨得快”。
-  return searchOnce(client, `${buildUrl(`pushed:>${since} created:>${since} stars:>${stars}`, 'updated')}${DISCOVERY_PER_PAGE}`);
+  // R37：活跃度只能靠 updated 排序近似——它说明"最近有提交"，不说明"涨得快"。
+  return searchOnce(client, `${buildUrl(`pushed:>${since} stars:>${stars}`, 'updated')}${DISCOVERY_PER_PAGE}`);
 }
 
 /**

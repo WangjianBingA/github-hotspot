@@ -56,17 +56,32 @@ test('R38 固定 now 时 created 是 now 减 days 的 UTC 日期串', async () =
   assert.ok(Array.isArray(out));
 });
 
-test('R38 活跃老项目用 pushed 与 created 双条件，日期同样取 UTC', async () => {
+test('R38 活跃老项目只按 pushed 过滤，日期取 UTC', async () => {
   let seen = '';
   await discoverActiveRepos({ getJson: async (url) => { seen = url; return { items: [] }; } },
     { days: 7, minStars: 500, now: new Date('2026-10-09T03:00:00Z') });
 
   const q = decodeURIComponent(seen);
   assert.match(q, /pushed:>2026-10-02/);
-  assert.match(q, /created:>2026-10-02/);
   assert.match(q, /stars:>500/);
   assert.match(seen, /sort=updated/);
   assert.match(seen, /order=desc/);
+  assert.equal(q, 'https://api.github.com/search/repositories?q=pushed:>2026-10-02 stars:>500&sort=updated&order=desc&per_page=50');
+});
+
+test('R39a 活跃老项目查询绝不叠加 created 限定符（限定符是 AND，会把老仓库全部剔除）', async () => {
+  const seen = [];
+  await discoverActiveRepos({ getJson: async (url) => { seen.push(url); return { items: [] }; } },
+    { days: 7, now: new Date('2026-10-09T03:00:00Z') });
+  // 默认参数也走一遍，防止只在显式传参的分支上修好。
+  await discoverActiveRepos({ getJson: async (url) => { seen.push(url); return { items: [] }; } },
+    { now: new Date('2026-10-09T03:00:00Z') });
+
+  for (const url of seen) {
+    assert.ok(!url.includes('created'), `活跃老项目查询里不该出现 created 限定符：${url}`);
+    assert.ok(!decodeURIComponent(url).includes('created:>'), `活跃老项目查询里不该出现 created 限定符：${url}`);
+    assert.match(decodeURIComponent(url), /pushed:>2026-10-02 stars:>500/);
+  }
 });
 
 // —— R36：per_page 的取值。 ——

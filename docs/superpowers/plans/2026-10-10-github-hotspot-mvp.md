@@ -1178,7 +1178,7 @@ test('npm 无 bin 时降级为 npmNoBin（黄色）', () => {
 
 test('PyPI 包给出 pip 命令；版本要求写进说明', () => {
   const r = classifyRunnability({ releases:null, npm:null,
-    pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10' },
+    pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10', repoMatches:true },
     chinese:{ hasChinese:false, localizedFiles:[] } });
   assert.equal(r.kind, 'pypiCompatible');
   assert.match(r.command, /^pip install /);
@@ -1216,7 +1216,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-按优先级判定 `releaseWindows > npmBinWin > pypiCompatible > npmNoBin > buildFromSource > dockerOnly > none`；**任何 `repoMatches !== true` 的 npm 结果一律忽略**；`difficulty = calculateGrade(RUNNABLE_POINTS[kind])`。`buildInstallGuide` 生成固定三步（第 1 步"你需要先准备什么"按 kind 给结论；第 2 步按 kind 给命令或下载链接；第 3 步"怎么用"）与按 kind 的 FAQ（≥3 条，含"装错了怎么卸载"）。
+按优先级判定 `releaseWindows > npmBinWin > pypiCompatible > npmNoBin > buildFromSource > dockerOnly > none`；**任何 `repoMatches !== true` 的 npm 结果一律忽略**（**R68**：PyPI 也同理 —— `pypiOwned = pypi.repoMatches === true`，缺失/`undefined`/`false` 时不下发 `pip install`、该档不成立并写 note；`lookupPyPI` 的 `repoMatches`/`evidence` 由 Task 10B 补齐）；`difficulty = calculateGrade(RUNNABLE_POINTS[kind])`。**R51**：`windowsAsset.url` 为空/缺失不算可用安装路径，必须落到下一档。**R48**：不得调用 `isPythonCompatible` 伪造兼容结论，只带 `requiresPython` 原文。**R64**：`chineseDoc = hasCjk`（喂计分），`hasChinese` 只管徽章；仅有非中文本地化时如实说「有本地化文档（非中文）」。**R65/R66/R67**：`buildFromSource`/`docker` 为调用方提供的证据旗标（没证据不猜）；npm 有 `bin` 但不支持 Windows 时不下发命令也不降级为 `npmNoBin`（落到 `none`，与 R45 一致）；这两档 `verified` 记 `true`。**R70/R71**：当证据缺失时，文案的主语必须是"我们没查到"，**不得**宣称项目级事实（如"这个项目没有安装方式"/"只有英文说明"）。`buildInstallGuide` 生成固定三步（第 1 步"你需要先准备什么"按 kind 给结论；第 2 步按 kind 给命令或下载链接；第 3 步"怎么用"）与按 kind 的 FAQ（≥3 条，含"装错了怎么卸载"）。
 
 - [ ] **Step 4: 运行确认通过**
 

@@ -24,9 +24,6 @@ const PUSH_PARTIAL_DAYS = 7;  // ≤7 天拿满分的 2/3（4 分），更久为
 const GATE_MIN_STARS = 200;
 const GATE_MAX_PUSH_DAYS = 7;
 
-// 纯资源清单类（awesome-*）只进经典榜，不进周榜与新手榜。
-const LIST_ONLY_RE = /(^|[/-])awesome([/-]|$)/i;
-
 /**
  * 热度分：7 日新增收藏做 log10 归一化，达标即满分，超出封顶。
  * 缺失、负数、NaN 等非法输入一律当 0 新增处理，返回 0 而不是抛错。
@@ -142,9 +139,12 @@ export function scoreRepo({ repo, runnability, velocity, extra }, now = new Date
 }
 
 /**
- * 硬性门槛（spec §6.2）：未归档、有许可证、近 7 天有提交、总收藏 ≥200、至少一条已核实的安装路径、
- * 不是纯资源清单类。六条必须同时满足；未通过的原因**全部**按顺序返回，中文、给用户看。
- * @param {{ ownerRepo?: string, stars?: number, pushedAt?: string, license?: string|{spdx_id?: string}|null, archived?: boolean }} repo
+ * 硬性门槛（spec §6.2）：未归档、有许可证、近 7 天有提交、总收藏 ≥200、至少一条已核实的安装路径
+ * （kind 必须是 RUNNABLE_POINTS 里分值大于 0 的一档，none 与未知 kind 都算没有）、
+ * 不是纯资源清单类（语言为空或只有 Markdown、且没有安装路径证据才判为清单类）。
+ * 六条必须同时满足；未通过的原因**全部**按顺序返回，中文、给用户看。
+ * @param {{ ownerRepo?: string, stars?: number, pushedAt?: string, language?: string|null,
+ *   license?: string|{spdx_id?: string}|null, archived?: boolean }} repo
  * @param {{ kind?: string, verified?: boolean }} runnability
  * @param {Date} [now] 显式传入"现在"，用于判断"近 7 天有提交"；默认 new Date()
  * @returns {{ ok: boolean, reasons: string[] }}
@@ -165,10 +165,19 @@ export function passesGates(repo, runnability, now = new Date()) {
     reasons.push(`收藏人数不足 ${GATE_MIN_STARS}`);
   }
 
-  const kind = runnability?.kind;
-  if (runnability?.verified !== true || !kind || kind === 'none') reasons.push('没有已核实的安装方式');
+  const installPathPoints = RUNNABLE_POINTS[runnability?.kind];
+  // 门槛要的是"真实存在、给得出安装命令或下载链接"的安装路径：kind 必须是已知且分值大于 0 的一档。
+  // none 与未知 kind 在用户视角上是同一件事——点开只有空白引导，所以一并挡下；
+  // dockerOnly（4 分）是真路径，只是要先用 Docker，照旧放行。
+  const hasVerifiedInstallPath = runnability?.verified === true
+    && Number.isFinite(installPathPoints)
+    && installPathPoints > 0;
+  if (!hasVerifiedInstallPath) reasons.push('没有已核实的安装方式');
 
-  if (LIST_ONLY_RE.test(repo.ownerRepo ?? '')) reasons.push('这是资料清单，不是能装的软件');
+  // 纯资源清单类（spec §6.2）：语言为空或只有 Markdown，且没有任何安装路径证据。
+  // 这里不看仓库名字，避免把 awesome-tool 这类真工具误挡在榜外。
+  const listOnlyLanguage = !repo.language || repo.language === 'Markdown';
+  if (listOnlyLanguage && !hasVerifiedInstallPath) reasons.push('这是资料清单，不是能装的软件');
 
   return { ok: reasons.length === 0, reasons };
 }

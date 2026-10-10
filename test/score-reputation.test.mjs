@@ -72,7 +72,7 @@ test('六条门槛全过时 ok 为 true 且不给原因', () => {
 });
 
 test('门槛会把所有未通过项一次说清，不只报第一条', () => {
-  const bad = { ...base, archived:true, license:null, stars:50,
+  const bad = { ...base, archived:true, license:null, stars:50, language:'',
     pushedAt:'2026-09-01T00:00:00Z', ownerRepo:'awesome/list-only' };
   const g = passesGates(bad, { kind:'none', verified:false }, new Date('2026-10-10T00:00:00Z'));
   assert.equal(g.ok, false);
@@ -84,4 +84,28 @@ test('门槛会把所有未通过项一次说清，不只报第一条', () => {
     '没有已核实的安装方式',
     '这是资料清单，不是能装的软件',
   ]);
+});
+
+test('清单类只按语言与安装路径判，名字里带 awesome 的真工具必须放行', () => {
+  // 有语言、有已核实安装路径 → 是能装的软件，名字再像清单也不算清单类。
+  const tool = { ...base, ownerRepo:'awesome-tool/cli', language:'Go' };
+  assert.equal(passesGates(tool, { kind:'npmBinWin', verified:true }, new Date()).ok, true);
+  // 没有语言（或只有 Markdown）又没有安装路径 → 才判为清单类。
+  for (const language of ['', null, 'Markdown']) {
+    const list = { ...base, ownerRepo:'awesome/list-only', language };
+    const g = passesGates(list, { kind:'none', verified:false }, new Date());
+    assert.equal(g.ok, false);
+    assert.ok(g.reasons.includes('这是资料清单，不是能装的软件'), `language=${String(language)} 应被判为清单类`);
+  }
+});
+
+test('语言为空但有已核实安装路径的项目不算清单类', () => {
+  assert.deepEqual(passesGates({ ...base, language:'' }, { kind:'dockerOnly', verified:true }, new Date()),
+    { ok: true, reasons: [] });
+});
+
+test('未知 kind 与 none 一样被门槛挡下，dockerOnly 这类真实路径仍放行', () => {
+  assert.equal(passesGates(base, { kind:'奇怪的kind', verified:true }, new Date()).ok, false);
+  assert.equal(passesGates(base, { kind:'none', verified:true }, new Date()).ok, false);
+  assert.equal(passesGates(base, { kind:'dockerOnly', verified:true }, new Date()).ok, true);
 });

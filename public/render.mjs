@@ -118,15 +118,59 @@ const DRAWER_TITLES = {
 };
 
 /**
- * 列表上方那句说明（Task 17 起抽屉真的存在了）：点开卡片会发生什么，必须如实说。
- * 注意它**不能**写成"点开就能看到三步安装说明"——凡是清单里出现这句话的写法一律被测试拦下；
- * 我们说的是"会有每一步要做什么"，而具体每一步来自项目自己的数据。
+ * 卡片上那句"这里可以点开"的入口说明。
+ *
+ * R105 / R111：这句话**必须与抽屉里真有的东西一致**。它曾经是一句固定文案，
+ * 无条件承诺「怎么装、为什么上榜」，可是经典榜的抽屉里根本没有"为什么上榜"（它不参与三轴评分，R25），
+ * 而没有预生成向导的项目渲染的是"去项目主页看"那句指路。所以改成按榜单与向导有无来给：
+ *   · 经典榜：只说"它凭什么在这个榜里"（那一节真的在）；
+ *   · 有向导的榜：说"怎么装"；
+ *   · 没有向导的榜：只说"为什么上榜"与"项目基本事实"（向导那节渲染的是一句指路话，不是三步）。
+ * @param {string} boardId 榜单 id
+ * @param {boolean} hasGuide 这条数据里有没有真的渲染得出来的安装向导
+ * @returns {string}
  */
-const CARD_DETAIL_HINT = '点开卡片会打开详情：把「怎么装」拆成三步，每一步做什么都写清楚了。'
-  + '看不懂的地方，先看<a href="prepare.html">新手准备页</a>，从头照着做一遍。';
+const cardDetailEntry = (boardId, hasGuide) => {
+  const parts = [];
+  if (boardId === CLASSIC_ID) {
+    parts.push('它凭什么在这个榜里');
+  } else {
+    if (hasGuide) parts.push('怎么装');
+    parts.push('为什么上榜');
+  }
+  parts.push('项目基本事实');
+  return `点开看详情（${parts.join('、')}）`;
+};
 
-/** 卡片上那句"这里可以点开"的入口说明（R105：抽屉做好之后不能再写"还在做"）。 */
-const CARD_DETAIL_ENTRY = '点开看详情（怎么装、为什么上榜）';
+/**
+ * 列表上方那句说明的几种说法（同样只承诺抽屉里真有的东西）。
+ * @param {string} boardId 榜单 id
+ * @param {boolean} hasGuide 这条数据里有没有真的渲染得出来的安装向导
+ * @returns {string} HTML 片段（纯文本 + 一个链接）
+ */
+const cardDetailHintText = (boardId, hasGuide) => {
+  const tail = '看不懂的地方，先看<a href="prepare.html">新手准备页</a>，从头照着做一遍。';
+  if (boardId === CLASSIC_ID) {
+    return '点开卡片会打开详情：这个榜按总收藏人数排，所以详情里说的是「它凭什么在这个榜里」、'
+      + '项目基本事实，以及一句话介绍。' + tail;
+  }
+  const front = hasGuide
+    ? '点开卡片会打开详情：把「怎么装」拆成三步，每一步做什么都写清楚了。'
+    : '点开卡片会打开详情：为什么上榜、项目基本事实、一句话介绍。'
+      + '这个项目没有现成的安装步骤，我们会指路到它自己的主页。';
+  return front + tail;
+};
+/**
+ * 这条数据里有没有"真的渲染得出来"的安装向导（R78）。
+ * 判据与 installGuideHtml 完全一致（有步骤或有常见问题就算有），
+ * 这样"卡片上承诺了三步"与"抽屉里真的有步骤"不会各说各话（R111）。
+ * @param {object} [install] 条目里的 install 字段
+ * @returns {boolean}
+ */
+function hasInstallGuide(install) {
+  const guide = install && typeof install === 'object' ? install : {};
+  return asArray(guide.steps).length > 0 || asArray(guide.faq).length > 0;
+}
 
 /** 命令框下面那句提示（真实缺陷：以前没说"失败了怎么办"，用户会以为按钮坏了）。 */
 const COPY_HINT = '按钮会把这一行复制到剪贴板；要是没反应，就自己选中这一行，按 Ctrl 加 C。';
@@ -135,9 +179,18 @@ const COPY_HINT = '按钮会把这一行复制到剪贴板；要是没反应，�
 export const COPY_DONE_TEXT = '已经复制好了，去命令行窗口里粘贴吧（右键粘贴，或者按 Ctrl 加 V）。';
 export const COPY_FAIL_TEXT = '没能自动复制。请自己选中那一行命令，按 Ctrl 加 C 复制。';
 
-/** 没有预生成向导时的指路话（不假装有步骤）。 */
-const NO_GUIDE_TEXT = '这个项目没有现成的安装步骤，我们只能让你去它自己的主页看：'
-  + '打开下面的「打开项目主页」，里面一般有「安装 / Installation」那一段。看不懂就把那一段整段复制给 AI 助手，让它讲成大白话。';
+/**
+ * 没有预生成向导时的指路话（不假装有步骤）。
+ * R112：这句话让读者用下方的「打开项目主页」，所以**只有在那个链接真的会渲染时**才这么指；
+ * `ownerRepo` 缺失时链接是空的（项目名都拼不出来），那时改成"在项目自己的页面上找"。
+ * @param {boolean} hasHomeLink 下方是否真的会给「打开项目主页」
+ * @returns {string}
+ */
+const noGuideText = (hasHomeLink) => (hasHomeLink
+  ? '这个项目没有现成的安装步骤，我们只能让你去它自己的主页看：'
+    + '打开下面的「打开项目主页」，里面一般有「安装 / Installation」那一段。看不懂就把那一段整段复制给 AI 助手，让它讲成大白话。'
+  : '这个项目没有现成的安装步骤；我们连它的主页地址都没拿到，所以只能让你自己去搜索它的名字，'
+    + '在它的官方页面上找「安装 / Installation」那一段。看不懂就把那一段整段复制给 AI 助手，让它讲成大白话。');
 
 /** 经典榜不参与三轴评分（R25），所以它这一节说的是"它凭什么在这个榜里"。 */
 const CLASSIC_NOTE = '这个榜按总收藏人数排，不参与热度、口碑、新手友好这三项的评分——'
@@ -180,6 +233,34 @@ const num = (value) => (isNum(value) ? value.toLocaleString('zh-CN') : '');
 
 /** 一定是数组（数据文件是外部输入，`boards` 可能不是数组）。 */
 const asArray = (value) => (Array.isArray(value) ? value : []);
+
+// ---------- 外部链接（R115：只放行 http/https） ----------
+
+/** 允许出现在页面链接里的协议（数据文件是外部输入，不能拿它当"一定是网址"来信任）。 */
+const SAFE_PROTOCOLS = new Set(['http:', 'https:']);
+
+/**
+ * 把 JSON 里的一个地址变成**可以安全放进 href** 的地址（R115）。
+ *
+ * 数据文件是外部输入：如果里面写的是 `javascript:…`，直接转义后塞进 `href` 会生成一个"能点的活链接"。
+ * 项目主页那个链接有固定的 github.com 前缀锚定，所以它安全；下载地址是原样的 URL，必须自己校验。
+ * 判据是解析出来的协议白名单，不是"字符串里有没有 javascript"这种能被绕过的写法。
+ * （这段注释里刻意不写完整的网址，免得把带反引号的 URL 混进注释——见 test/page-content.test.mjs
+ * 里"去注释助手"那段说明：注释里的反引号同样会影响那台扫描器。）
+ * @param {*} value 原始地址
+ * @returns {string} 能用的地址；协议不在白名单里（或根本不是合法 URL）时返回空串
+ */
+export function safeHref(value) {
+  if (typeof value !== 'string' || value.trim() === '') return '';
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    // 相对地址、拼错的地址一律不放行：这里的地址来自采集结果，一定是绝对地址。
+    return '';
+  }
+  return SAFE_PROTOCOLS.has(url.protocol) ? value.trim() : '';
+}
 
 // ---------- 文案与徽章 ----------
 
@@ -427,18 +508,26 @@ export function itemCard({ boardId, item }) {
     + boardScore(boardId, item)
     + reasonHtml
     // Task 17 起抽屉真的存在了：这里如实说"点开有详情"，不再写"还在做"（写了就是对用户说谎）。
-    + `<div class="card-actions">${link}<span class="hint">${CARD_DETAIL_ENTRY}</span></div>`
+    // R111：承诺的小节要与这一榜、这一条**实际**会给的东西一致（经典榜没有"为什么上榜"、
+    // 没有向导的项目那节渲染的是指路话）。
+    + `<div class="card-actions">${link}<span class="hint">${escapeHtml(cardDetailEntry(boardId, hasInstallGuide(item?.install)))}</span></div>`
     + '</div>';
 }
 
 /**
  * 榜单列表上方那段说明（R102：文案选择属于显示决策，住在纯函数层）。
  *
+ * R111：它也要与抽屉里真有的东西一致，所以需要榜单名与"这一榜有没有向导"。
  * 返回的是**纯文本**（可以有链接这种行内标签），外层由调用方包成段落。
+ * @param {{ boardId?: string, hasGuide?: boolean }} [input]
  * @returns {string} HTML 片段（纯文本 + 一个链接）
  */
-export function cardDetailHint() {
-  return CARD_DETAIL_HINT;
+export function cardDetailHint(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  return cardDetailHintText(
+    typeof source.boardId === 'string' ? source.boardId : '',
+    source.hasGuide === true,
+  );
 }
 
 // ---------- 详情抽屉（Task 17；R25 / R64 / R78 / 置信度 / 转义都在这里定） ----------
@@ -520,16 +609,19 @@ export function installGuideHtml(guide) {
       ? stepBody(step.body, command, copyId, withCommand)
       : (withCommand ? commandBlock(command, copyId) : '');
     // 下载按钮只在这一步真的有下载地址时给；没有就不给（给一个死链接比不给更糟）。
-    const downloadHtml = typeof step.downloadUrl === 'string' && step.downloadUrl !== ''
-      ? `<a class="download-button" data-download href="${escapeAttr(step.downloadUrl)}" target="_blank" rel="noreferrer noopener">下载安装包</a>`
-      : '';
+    // R115：地址来自 JSON（外部输入），进 href 前要过协议白名单——`javascript:` 那种绝不能变成活链接。
+    const safeDownload = safeHref(step.downloadUrl);
+    const downloadHtml = safeDownload === ''
+      ? ''
+      : `<a class="download-button" data-download href="${escapeAttr(safeDownload)}" target="_blank" rel="noreferrer noopener">下载安装包</a>`;
     return `<li class="install-step"><h4 class="step-title">${title}</h4>${bodyHtml}${downloadHtml}</li>`;
   }).join('');
 
   // 没有命令、但有下载地址时（Windows 安装包那种），在第 2 步的下载按钮之外再给一次明显入口。
-  const topDownload = steps.some((step) => typeof step.downloadUrl === 'string' && step.downloadUrl !== '')
+  const safeTopDownload = safeHref(downloadUrl);
+  const topDownload = steps.some((step) => safeHref(step.downloadUrl) !== '')
     ? ''
-    : (downloadUrl === '' ? '' : `<p class="step-line"><a class="download-button" data-download href="${escapeAttr(downloadUrl)}" target="_blank" rel="noreferrer noopener">下载安装包</a></p>`);
+    : (safeTopDownload === '' ? '' : `<p class="step-line"><a class="download-button" data-download href="${escapeAttr(safeTopDownload)}" target="_blank" rel="noreferrer noopener">下载安装包</a></p>`);
 
   const faqHtml = faq.length === 0 ? '' : `<details class="faq"><summary>${escapeHtml(DRAWER_TITLES.faq)}（${faq.length} 条）</summary>`
     + `<dl class="faq-list">${faq.map((entry) => {
@@ -597,9 +689,12 @@ export function detailDrawer(input = {}) {
     ? escapeHtml(item.description)
     : '';
 
+  // R112：没有向导时那句指路话要看**链接到底有没有**——`ownerRepo` 缺失时下方不会有「打开项目主页」，
+  // 这时还让人"打开下面的链接"就是在指一个不存在的东西。
+  const hasHomeLink = full !== '';
   const guideHtml = installGuideHtml(install);
   const guideSection = guideHtml === ''
-    ? `<section class="drawer-section" data-section="guide"><p class="section-note">${escapeHtml(NO_GUIDE_TEXT)}</p></section>`
+    ? `<section class="drawer-section" data-section="guide"><p class="section-note">${escapeHtml(noGuideText(hasHomeLink))}</p></section>`
     : guideHtml;
 
   // 事实表（语言、总收藏、拿去改造、最后更新、许可证、维护状态）：拿不到的整条不列。
@@ -795,9 +890,11 @@ export function buildBoardView(input = {}) {
   }
 
   // 卡片上下的说明语也在这里定（R102）：app.js 只管把它们贴到页面上，自己不写一个字。
+  // R111：这句话要按榜单与"这一榜的条目里有没有向导"来给，否则会承诺抽屉里根本没有的小节。
+  const boardHasGuide = items.some((item) => hasInstallGuide(item?.install));
   const hints = [
     { key: 'board-note', html: boardNote(boardId) },
-    { key: 'card-detail', html: cardDetailHint() },
+    { key: 'card-detail', html: cardDetailHintText(boardId, boardHasGuide) },
     { key: 'difficulty-filter', html: difficultyFilterHint(boardId) },
   ].filter((hint) => hint.html !== '');
 
@@ -895,9 +992,14 @@ export function noDataNotice() {
  * @returns {string} HTML
  */
 export function dataErrorNotice(dateCount) {
-  const more = isNum(dateCount) && dateCount >= 2
+  // R114：**没拿到天数时不许替数据断言**「现在只有这一份数据」——那是在说一件我们并不知道的事。
+  // 只有明确知道"就这一天"时才说没有别的日期可换；其余情况（≥2 天，或压根不知道）给中性的说法。
+  const known = isNum(dateCount);
+  const more = known && dateCount >= 2
     ? '你也可以用页面底部的日期选择器换一天看看（那一天的文件可能没坏）。'
-    : '现在只有这一份数据，所以没有别的日期可换。';
+    : (known
+      ? '现在只有这一份数据，所以没有别的日期可换。'
+      : '如果还有别的日期可看，可以用页面底部的日期选择器换一天试试。');
   return '<div class="notice notice-empty"><strong>这一期的数据文件读不出来。</strong>'
     + '文件在，但里面的内容和这个页面期待的形状不一样（可能是采集写到一半、或者文件被改坏了）。'
     + `重跑一次采集就会覆盖掉它：在项目目录里运行 ${COLLECT_COMMAND}。${more}</div>`;

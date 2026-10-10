@@ -39,6 +39,7 @@ import {
   itemMeta,
   missingDateNotice,
   noDataNotice,
+  safeHref,
   scoreBars,
 } from '../public/render.mjs';
 
@@ -55,17 +56,24 @@ const read = (p) => readFileSync(new URL(`../public/${p}`, import.meta.url), 'ut
  * 一起删，删除范围还会溢出到后面的行）。后果不是"多删了点注释"，而是**让诚实断言空转成永久绿**：
  * 扫不到的东西当然不违规。
  *
- * 现在改成**按引号配对扫描**：先知道"此刻在不在字符串里"，才谈得上"这是不是注释"。
- * 这里比第一版多了一层（第一版只用一个 quote 变量记"现在在不在字符串里"）：
- * 模板串里可以再套模板串（`` `${list.map((x) => `<li>${x}</li>`)}` ``），
- * 用一个变量记状态时，内层那个反引号会被当成"外层模板串结束"，后面整段内容就被当成代码去解析，
- * 于是 `https://` 里的两个斜杠又被当成注释、真代码再次被删掉（实测：第一版在 render.mjs 上
- * 会让 noreferrer 由 4 处变 3 处）。所以现在用一个模式栈：
+ * R110（真实缺陷，已修）：第二版处理好了字符串，却没处理**正则字面量**：
+ *   · `/[//]/` 里的两个斜杠被当成注释开头，这一行剩下的代码全没了；
+ *   · `/[']/` 里那个引号**颠倒了引号配对**，于是后面字符串里的两个斜杠又变成"注释"。
+ * 现在扫描器多了一层判断：`/` 前面如果是"值"（标识符、数字、`)`、`]`、反引号收尾）就是除号，
+ * 否则就是正则字面量；进了正则就一直抄到未转义的 `/`，里面的引号与斜杠都不参与外层状态机。
+ *
+ * 现在它是**按引号配对扫描** + **模式栈** + **正则字面量识别**：
  *   · 单引号 / 双引号串：跳到配对的引号；
- *   · 模板串：内容原样抄出来，只有 `${…}` 里才当代码继续解析，`}` 之后又回到模板串；
- *   · 代码：`//` 删到行尾、`/* … *​/` 整块删掉（并补一个换行，让行号还能对上）。
+ *   · 模板串：内容原样抄出来，只有 `${…}` 里才当代码继续解析，`}` 之后又回到模板串
+ *     （模板串里可以再套模板串，一个 quote 变量记不住）；
+ *   · 正则字面量：整段原样抄出来（含两端斜杠与后面的标志字母）；
+ *   · 代码：`//` 删到行尾、`/* … *\/` 整块删掉（并补一个换行，让行号还能对上）。
+ *     这句里的 `*\/` 是**故意**写成带反斜杠的：直接写那两个字符会提前结束这段 JSDoc。
+ *     也绝不能用"看不见的字符"来躲开它（例如在星号与斜杠之间塞一个零宽空格）——
+ *     那种写法一旦被编辑器做一次空白规范化就会现出原形、整个文件立刻语法错。
+ *     注释与字符串里也不许出现零宽字符，那条由后面的断言钉住。
  * @param {string} source 源码
- * @returns {string} 去掉注释（保留字符串字面量内容）的源码
+ * @returns {string} 去掉注释（保留字符串、模板串、正则字面量内容）的源码
  */
 function stripComments(source) {
   const text = String(source ?? '');
@@ -74,15 +82,67 @@ function stripComments(source) {
   // 模式栈：'code' 表示按代码解析；'template' 表示在模板串内容里（只有 `${` 会切回代码）。
   const stack = ['code'];
 
-  /** 跳过一段带引号的串（单引号或双引号），内容原样抄出来。 */
-  const readQuoted = (quote) => {
-    out += quote;
-    i += 1;
+  // `/` 到底是不是正则的开头，只看它前面那个"有意义"的字符：
+  // 这些字符后面一定是一个表达式，所以 `/` 是正则；其余（标识符、数字、`)`、`]`、引号收尾）后面
+  // 的 `/` 是除号。宁可把除号误判成正则，也不能把正则误判成注释——后者会真的删掉代码。
+  // 最前面先补一个换行：`pendingRegex` 的初始值是 true，等于"文件开头可以出现正则/注释"。
+  out = '\n';
+  let pendingRegex = true;
+  const lastSignificant = () => {
+    for (let n = out.length - 1; n >= 0; n -= 1) {
+      if (!/\s/.test(out[n])) return out[n];
+    }
+    return null;
+  };
+  const slashStartsRegex = () => {
+    const previous = lastSignificant();
+    return pendingRegex || previous === null || '(,=:[!&|?{};+-*%^<>~'.includes(previous);
+  };
+
+  /** 整段抄出来（字符串 / 模板串 / 正则字面量的内容都不许动）。 */
+  const copy = (count) => {
+    out += text.slice(i, i + count);
+    i += count;
+  };
+
+  /** 跳过注释（连同空白），只把**真实的换行**抄进输出，让行号还能对上。 */
+  const skipTrivia = () => {
+    let moved = false;
     while (i < text.length) {
       const ch = text[i];
-      out += ch;
-      i += 1;
-      if (ch === '\\' && i < text.length) { out += text[i]; i += 1; continue; }
+      if (ch === '/' && text[i + 1] === '/') {
+        // 行注释：删到行尾，但**不要**吃掉那个换行（下一轮由"真实的换行"那条抄进去）。
+        while (i < text.length && text[i] !== '\n') i += 1;
+        moved = true;
+        continue;
+      }
+      if (ch === '/' && text[i + 1] === '*') {
+        i += 2;
+        while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) {
+          if (text[i] === '\n') out += '\n';
+          i += 1;
+        }
+        i += 2;
+        moved = true;
+        continue;
+      }
+      if (ch === '\n') { out += '\n'; i += 1; moved = true; continue; }
+      // 空格与制表符**到这里就停**：接着交给主循环原样抄出去。
+      // 删掉它们会把 `const re` 粘成 `constre`（只是不好看），但更糟的是正则判断靠的是
+      // "上一个有意义的字符"，而真正决定它的是**循环开头那一次 skipTrivia**：
+      // 空白的处理放在这里就说不清"到底跳没跳过"，会漏判 `/` 是正则还是除号。
+      break;
+    }
+    return moved;
+  };
+
+  /** 跳过一段带引号的串（单引号或双引号），内容原样抄出来。 */
+  const readQuoted = (quote) => {
+    copy(1);
+    while (i < text.length) {
+      const ch = text[i];
+      copy(1);
+      if (ch === '\\' && i < text.length) { copy(1); continue; }
       if (ch === quote || ch === '\n') return;
     }
   };
@@ -90,34 +150,49 @@ function stripComments(source) {
   while (i < text.length) {
     if (stack[stack.length - 1] === 'template') {
       const ch = text[i];
-      if (ch === '\\') { out += ch; i += 1; if (i < text.length) { out += text[i]; i += 1; } continue; }
-      if (ch === '`') { out += ch; i += 1; stack.pop(); continue; }
-      if (ch === '$' && text[i + 1] === '{') { out += '${'; i += 2; stack.push('code'); continue; }
-      out += ch;
-      i += 1;
+      if (ch === '\\') { copy(2); continue; }
+      if (ch === '`') { copy(1); stack.pop(); pendingRegex = false; continue; }
+      if (ch === '$' && text[i + 1] === '{') { copy(2); stack.push('code'); pendingRegex = true; continue; }
+      copy(1);
       continue;
     }
 
+    if (skipTrivia()) { pendingRegex = slashStartsRegex(); }
+
+    if (i >= text.length) break;
     const ch = text[i];
-    if (ch === "'" || ch === '"') { readQuoted(ch); continue; }
-    if (ch === '`') { out += ch; i += 1; stack.push('template'); continue; }
-    if (ch === '}' && stack.length > 1) { out += ch; i += 1; stack.pop(); continue; }
-    if (ch === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i += 1;
+    if (/\s/.test(ch)) { copy(1); continue; }
+    if (ch === "'" || ch === '"') { readQuoted(ch); pendingRegex = false; continue; }
+    if (ch === '`') { copy(1); stack.push('template'); pendingRegex = false; continue; }
+    if (ch === '/') {
+      if (slashStartsRegex()) {
+        // 正则字面量：`/` 起、未转义的 `/` 止，后面可能还有 gimsuy 这些标志字母。
+        copy(1);
+        let inClass = false;
+        while (i < text.length) {
+          const cur = text[i];
+          if (cur === '\\') { copy(2); continue; }
+          if (cur === '\n') break;
+          if (cur === '[') inClass = true;
+          else if (cur === ']') inClass = false;
+          else if (cur === '/' && !inClass) { copy(1); while (i < text.length && /[a-z]/i.test(text[i])) copy(1); break; }
+          copy(1);
+        }
+        pendingRegex = false;
+        continue;
+      }
+      copy(1);
+      pendingRegex = true;
       continue;
     }
-    if (ch === '/' && text[i + 1] === '*') {
-      i += 2;
-      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1;
-      // 换行补回去：注释被删掉后，剩下的代码行号还能对上文件里的行号（排查时省事）。
-      i += 2;
-      out += '\n';
-      continue;
-    }
-    out += ch;
-    i += 1;
+    if (ch === '}' && stack.length > 1) { copy(1); stack.pop(); continue; }
+    if (')]'.includes(ch)) { copy(1); pendingRegex = true; continue; }
+    if (ch === '{' || ch === ';' || ch === ',') { copy(1); pendingRegex = true; continue; }
+    copy(1);
+    pendingRegex = false;
   }
-  return out;
+  // 开头补的那个换行去掉，让输出与输入的第一行对得上。
+  return out.replace(/^\n/, '');
 }
 
 /** 造一条榜单条目：只给测试关心的字段，其余交给默认值。 */
@@ -690,6 +765,54 @@ test('R105：全部用户可见文案都不得承诺"点开就能看安装说明
   assert.match(hintsOf('weekly'), /点开卡片/, '列表上方的说明要与"点开有抽屉"这件事一致');
 });
 
+// ---------- R111：卡片/列表上的承诺必须与抽屉里真有的小节一致 ----------
+
+test('R111：经典榜的卡片与提示不许承诺"为什么上榜"', () => {
+  // R25 里经典榜的抽屉根本没有"为什么上榜"这一节（它不参与三轴评分），卡片上也就不能这么说。
+  const classicCard = itemCard({ boardId: 'classic', item: item({ stars: 100, scores: { total: 90 } }) });
+  assert.match(classicCard, /它凭什么在这个榜里/);
+  assert.ok(!classicCard.includes('为什么上榜'), '经典榜的卡片不得承诺"为什么上榜"');
+
+  const classicHint = hintsOf('classic');
+  assert.ok(!classicHint.includes('为什么上榜'), '经典榜的列表说明不得承诺"为什么上榜"');
+  assert.match(classicHint, /点开卡片/);
+
+  // 抽屉与卡片的说法要对得上：经典榜的抽屉里确实是"它凭什么在这个榜里"这一节。
+  const classicDrawer = detailDrawer({ boardId: 'classic', item: item({ stars: 100 }) });
+  assert.match(classicDrawer, /它凭什么在这个榜里/);
+  assert.ok(!classicDrawer.includes('为什么上榜'));
+});
+
+test('R111：没有安装向导的项目，卡片与提示不许承诺"三步"', () => {
+  const noGuide = item({ grade: 'red' }); // 没有 install 字段
+  const withoutGuide = itemCard({ boardId: 'weekly', item: noGuide });
+  assert.ok(!withoutGuide.includes('怎么装'), '没有向导就不能承诺"怎么装"');
+  assert.match(withoutGuide, /为什么上榜/);
+
+  // 有向导时才说"怎么装"。
+  const withGuide = itemCard({ boardId: 'weekly', item: drawerItem({ scores: { total: 80 } }) });
+  assert.match(withGuide, /怎么装/);
+
+  // 列表上方的说明同样按"这一榜有没有向导"分：这一榜一条向导都没有时，不能说"拆成三步"。
+  const noGuideHint = hintsOf('weekly');
+  assert.ok(!noGuideHint.includes('拆成三步'), '一条向导都没有时不许承诺三步');
+  const withGuideHint = buildBoardView({ items: [drawerItem({ install: installGuide() })], boardId: 'weekly', daily: daily() })
+    .hints.map((h) => h.html).join('\n');
+  assert.match(withGuideHint, /拆成三步/);
+  assert.match(withGuideHint, /prepare\.html/);
+});
+
+test('R112：没有项目主页链接时，那句指路话不许让人"打开下面的链接"', () => {
+  // ownerRepo 缺失 → 下方不会渲染「打开项目主页」，所以指路话也不能提它。
+  const noRepo = detailDrawer({ boardId: 'weekly', item: item({ ownerRepo: '', name: '某项目' }) });
+  assert.ok(!noRepo.includes('打开下面的「打开项目主页」'), '没有链接就不能让人去点那个链接');
+  assert.match(noRepo, /没有现成的安装步骤/);
+  // 有 ownerRepo 时照旧给出那条指引，并且链接真的在。
+  const withRepo = detailDrawer({ boardId: 'weekly', item: item({ install: undefined }) });
+  assert.match(withRepo, /打开下面的「打开项目主页」/);
+  assert.match(withRepo, /class="project-link"/);
+});
+
 // ---------- ⑪ Task 17：详情抽屉（R25 / R64 / R78 / 置信度 / 转义） ----------
 
 /**
@@ -775,7 +898,8 @@ test('R78：抽屉渲染 JSON 里预生成的三步与常见问题，且不重�
 
   // 渲染层不许自己造向导文案：任一来源模板的句子只要**在 JS 源码里逐字出现**，
   // 就说明有人把服务端模板抄进了浏览器（于是就有了第二个真相源，两处早晚会不一致）。
-  const source = read('render.mjs');
+  // R116：这段说明与这张表要覆盖**两个** JS 文件——上一版只扫了 render.mjs，`app.js` 只对了一句，
+  // 而"只扫一个文件"正是 R105 / R111 那类漏洞溜过去的同一个教训。
   const templates = [
     '需要先装一个免费的 Node.js',
     '把下面这一行整段复制过去',
@@ -783,8 +907,10 @@ test('R78：抽屉渲染 JSON 里预生成的三步与常见问题，且不重�
     '按键盘上的 Windows 键，输入 cmd 或 PowerShell',
     '第一次会问你要不要下载',
   ];
-  for (const sentence of templates) {
-    assert.ok(!source.includes(sentence), `render.mjs 里抄了服务端模板：${sentence}`);
+  for (const [name, source] of Object.entries({ 'render.mjs': read('render.mjs'), 'app.js': read('app.js') })) {
+    for (const sentence of templates) {
+      assert.ok(!source.includes(sentence), `${name} 里抄了服务端模板：${sentence}`);
+    }
   }
 });
 
@@ -1072,6 +1198,65 @@ test('R106：去注释助手不得删掉字符串里的真代码', () => {
   assert.ok(!codeOnly.includes('replace(/\\/\\*'), '还有用例在用会被字符串骗倒的行内正则');
 });
 
+test('R110：去注释助手不得把正则字面量当成注释（也不许颠倒引号配对）', () => {
+  // ① 正则字符类里的两个斜杠：以前被当成行注释的开头，这一行剩下的代码全没了。
+  const slashInClass = 'const re = /[//]/; const keep = 1; // tail';
+  assert.equal(stripComments(slashInClass), 'const re = /[//]/; const keep = 1; ');
+
+  // ② 正则里的引号：以前会颠倒引号配对，于是后面字符串里的 `https://` 又被当注释。
+  const quoteInRegex = "const r = /[']/; const u = 'https://a';";
+  assert.equal(stripComments(quoteInRegex), quoteInRegex);
+
+  // ③ 除号不能被误判成正则（误判的代价是"多抄一段"，比删代码轻，但也不该发生）。
+  assert.equal(stripComments('const n = 10 / 2; // 注释'), 'const n = 10 / 2; ');
+  assert.equal(stripComments('const x = a / b / c; // 注释'), 'const x = a / b / c; ');
+  // ④ 转义过的斜杠、正则后面的标志字母、以及"行首就是正则"的写法。
+  assert.equal(stripComments('const re = /a\\/b/g; // 注释'), 'const re = /a\\/b/g; ');
+  assert.equal(stripComments('/^x$/.test(y); // 注释'), '/^x$/.test(y); ');
+  // ⑤ 块注释照旧删掉（并且不破坏后面的代码）。
+  assert.equal(stripComments('/* 块注释\n   第二行 */\nconst after = 1;'), '\n\nconst after = 1;');
+
+  // ⑥ 保险丝：对**每个会被扫描的文件**，去注释之后必须还包含这些"必须活着"的串。
+  //    哨兵的作用是——将来出现某种新形状又把代码删掉时，测试会因为**缺哨兵**而失败，
+  //    而不是让诚实断言静默通过（这正是 R106 / R110 两次踩到的同一个坑）。
+  //    每个文件的哨兵**按它自己真的含有哪些串**来列（强塞一个它本来就没有的串，只会得到一条假红）。
+  const sentinelsByFile = {
+    'render.mjs': ['escapeHtml', 'escapeAttr', 'https://github.com', 'noreferrer noopener', 'cardDetailEntry'],
+    'app.js': ['escapeHtml', 'escapeAttr', 'detailDrawer', 'innerHTML', 'addEventListener'],
+  };
+  for (const [name, sentinels] of Object.entries(sentinelsByFile)) {
+    const strippedSource = stripComments(read(name));
+    for (const sentinel of sentinels) {
+      assert.ok(strippedSource.includes(sentinel), `${name} 去注释之后少了哨兵 ${sentinel}`);
+    }
+  }
+  // 测试文件自己也要有哨兵（它同样被这个助手扫过）。
+  const selfStripped = stripComments(readFileSync(new URL('./page-content.test.mjs', import.meta.url), 'utf8'));
+  assert.ok(selfStripped.includes('stripComments'), '本文件去注释之后少了哨兵 stripComments');
+});
+
+test('R109：被扫描的源码里不许出现看不见的字符（零宽空格那类定时炸弹）', () => {
+  // 真实缺陷：那句 JSDoc 里曾经用"星号 + 零宽空格 + 斜杠"来避免提前结束注释。
+  // 后果不是风格问题——任何一次空白规范化、重新输入或复制粘贴都会让它现出原形，整个文件立刻语法错。
+  // 这里把几个常见的不可见字符全局扫一遍（含被改过的每个文件）。
+  const invisible = ['\u200b', '\u200c', '\u200d', '\ufeff', '\u2060', '\u00a0'];
+  const names = ['U+200B 零宽空格', 'U+200C', 'U+200D', 'U+FEFF', 'U+2060', 'U+00A0 不换行空格'];
+  const files = ['index.html', 'app.js', 'render.mjs', 'style.css', 'prepare.html'];
+  const surfaces = files.map((file) => [file, read(file)]);
+  surfaces.push(['test/page-content.test.mjs', readFileSync(new URL('./page-content.test.mjs', import.meta.url), 'utf8')]);
+  for (const [file, text] of surfaces) {
+    for (let n = 0; n < invisible.length; n += 1) {
+      const index = text.indexOf(invisible[n]);
+      if (index === -1) continue;
+      const line = text.slice(0, index).split('\n').length;
+      assert.fail(`${file} 第 ${line} 行有 ${names[n]}`);
+    }
+  }
+  // 正面对照：扫的对象确实读到了东西（否则这条断言会空转成永久绿）。
+  assert.equal(surfaces.length, 6);
+  assert.ok(surfaces.every(([, text]) => text.length > 500));
+});
+
 test('R107：数据形状不对时，建议必须与用户当下能做的事一致', () => {
   // 只有一天数据时日期选择器是隐藏的：不能让人"换一天看看"。
   const oneDate = dataErrorNotice(1);
@@ -1084,10 +1269,15 @@ test('R107：数据形状不对时，建议必须与用户当下能做的事一�
   const manyDates = dataErrorNotice(2);
   assert.match(manyDates, /换一天/);
   assert.match(manyDates, /日期选择器/);
-  // 参数拿不准（不传 / 不是数字）时按保守的那一边说。
-  assert.ok(!dataErrorNotice().includes('换一天'));
-  assert.ok(!dataErrorNotice('2').includes('换一天'));
-  // 只有一天时要把"没有别的日期可换"说明白，而不是含糊带过。
+  // R114：**不知道**有几天时不许替数据断言"只有这一份"（那是一件我们并不知道的事）；
+  // 那时给的是中性说法（"如果还有别的日期可看……"），只在确实知道天数时才给确定建议。
+  for (const unknown of [undefined, null, '2', NaN]) {
+    const notice = dataErrorNotice(unknown);
+    assert.ok(!notice.includes('没有别的日期可换'), `天数未知（${String(unknown)}）时不得断言只有一份数据`);
+    assert.ok(!notice.includes('日期选择器换一天看看'), `天数未知（${String(unknown)}）时不得给确定建议`);
+    assert.match(notice, /npm run collect --offline/);
+  }
+  // 只有一天时（确实知道）才把"没有别的日期可换"说明白。
   assert.match(dataErrorNotice(1), /没有别的日期可换/);
 
   // buildBoardView 真的把这个判断算进去了（不是只在测试里调了一下函数）。
@@ -1148,6 +1338,50 @@ test('R108：语言筛选的回退发生在算视图之前，不会先画一份�
   // 回退的实现本身要用纯函数给的那个判断（不能自己写一套"这个语言还在不在"的比较）。
   const fallbackEnd = code.indexOf('function computeView');
   assert.match(code.slice(fallbackAt, fallbackEnd), /languageSelectionIsValid\(/, '判断本身要用纯函数给的那一个');
+});
+
+test('R113：新手准备页不许把 Markdown 的星号原样给新手看', () => {
+  const html = read('prepare.html');
+  // 行内强调要用真的 <strong>；正文（不是注释）里不该出现 `**`。
+  const bodyHtml = html.replace(/<!--[\s\S]*?-->/g, '');
+  assert.ok(!bodyHtml.includes('**'), '正文里出现 Markdown 星号，新手看到的会是两个星号');
+  assert.match(bodyHtml, /<strong>用键盘打字下命令<\/strong>/);
+  assert.match(bodyHtml, /<strong>不要为装它付钱<\/strong>/);
+});
+
+test('R115：链接协议必须过白名单（javascript: 之类的地址不许变成活链接）', () => {
+  // 下载地址是原样的 URL（不像项目主页那个有固定前缀锚定），所以必须校验协议。
+  const evil = installGuide({
+    command: null,
+    downloadUrl: 'javascript:alert(1)',
+    steps: [
+      { title: '第 1 步 · 你需要先准备什么', body: '有一台 Windows 电脑就够了。' },
+      { title: '第 2 步 · 点下面的链接', body: '点这个链接下载。', downloadUrl: 'javascript:alert(1)' },
+      { title: '第 3 步 · 怎么用', body: '装好之后打开它。' },
+    ],
+  });
+  const html = detailDrawer({ boardId: 'newbie', item: drawerItem({ install: evil }) });
+  assert.ok(!html.includes('javascript:'), '危险协议不许出现在抽屉里');
+  assert.ok(!html.includes('data-download'), '地址不安全时连下载按钮都不该给');
+
+  // 正常地址照旧给按钮，并且只认 http/https。
+  assert.equal(safeHref('https://example.com/a.exe'), 'https://example.com/a.exe');
+  assert.equal(safeHref('http://example.com/a.exe'), 'http://example.com/a.exe');
+  for (const bad of ['javascript:alert(1)', 'data:text/html,<script>', 'file:///C:/x.exe', '/relative/a.exe', '不是地址', '', null, 42]) {
+    assert.equal(safeHref(bad), '', `${String(bad)} 不该被放行`);
+  }
+  const good = installGuide({
+    command: null,
+    downloadUrl: 'https://example.com/tool-setup.exe',
+    steps: [
+      { title: '第 1 步 · 你需要先准备什么', body: '有一台 Windows 电脑就够了。' },
+      { title: '第 2 步 · 点下面的链接', body: '点这个链接下载。', downloadUrl: 'https://example.com/tool-setup.exe' },
+      { title: '第 3 步 · 怎么用', body: '装好之后打开它。' },
+    ],
+  });
+  const goodHtml = detailDrawer({ boardId: 'newbie', item: drawerItem({ install: good }) });
+  assert.match(goodHtml, /data-download/);
+  assert.match(goodHtml, /href="https:\/\/example\.com\/tool-setup\.exe"/);
 });
 
 // ---------- ⑭ 静态服务器真的把页面送到浏览器 ----------

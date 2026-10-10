@@ -50,8 +50,10 @@ test('npm 无 bin 时降级为 npmNoBin（黄色）', () => {
 });
 
 test('PyPI 包给出 pip 命令；版本要求写进说明', () => {
+  // R68：PyPI 与 npm 一样要先过归属校验（repoMatches === true）才下发命令，
+  // 所以这条简报用例的输入补上了 repoMatches 字段；断言一字未改（见报告 §10）。
   const r = classifyRunnability({ releases:null, npm:null,
-    pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10' },
+    pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10', repoMatches:true },
     chinese:{ hasChinese:false, localizedFiles:[] } });
   assert.equal(r.kind, 'pypiCompatible');
   assert.match(r.command, /^pip install /);
@@ -87,7 +89,7 @@ test('Windows 安装包的第 2 步给下载链接而不是命令', () => {
 const SAMPLES = {
   releaseWindows: { releases:{ windowsAsset:{ name:'app-setup.exe', url:'https://example.com/app-setup.exe' } } },
   npmBinWin: { npm:{ packageName:'opencode-ai', repoMatches:true, hasBin:true, osIncludesWin:true, evidence:'repository' } },
-  pypiCompatible: { pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10' } },
+  pypiCompatible: { pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10', repoMatches:true, evidence:'project_urls' } },
   npmNoBin: { npm:{ packageName:'some-lib', repoMatches:true, hasBin:false } },
   buildFromSource: { buildFromSource:true },
   dockerOnly: { docker:true },
@@ -106,7 +108,7 @@ test('优先级表：releaseWindows > npmBinWin > pypiCompatible > npmNoBin > bu
   const all = {
     releases:{ windowsAsset:{ name:'a.exe', url:'https://x/a.exe' } },
     npm:{ packageName:'p', repoMatches:true, hasBin:true, osIncludesWin:true, evidence:'repository' },
-    pypi:{ packageName:'pp', version:'1.0.0', requiresPython:null },
+    pypi:{ packageName:'pp', version:'1.0.0', requiresPython:null, repoMatches:true },
     buildFromSource:true,
     docker:true,
   };
@@ -157,7 +159,7 @@ test('R51：只有空链接（或纯空白链接）的安装包时，kind 为 no
 
 test('R48：不编造"兼容"结论——要求高到不可能也照给 PyPI 路径，只带要求原文', () => {
   const r = classifyRunnability({ releases:null, npm:null,
-    pypi:{ packageName:'needs-future-python', version:'9.9.9', requiresPython:'>=99.0' } });
+    pypi:{ packageName:'needs-future-python', version:'9.9.9', requiresPython:'>=99.0', repoMatches:true } });
   assert.equal(r.kind, 'pypiCompatible');
   assert.equal(r.difficulty, 'yellow');
   assert.equal(r.verified, true);
@@ -169,7 +171,7 @@ test('R48：不编造"兼容"结论——要求高到不可能也照给 PyPI 路
 
 test('R48：拿不到 Python 版本要求时同样不猜，只说实话', () => {
   const r = classifyRunnability({ releases:null, npm:null,
-    pypi:{ packageName:'x', version:'1.0.0', requiresPython:null } });
+    pypi:{ packageName:'x', version:'1.0.0', requiresPython:null, repoMatches:true } });
   assert.equal(r.kind, 'pypiCompatible');
   assert.equal(r.requiresPython, null);
   assert.ok(r.notes.some(n => n.includes('看不到')));
@@ -200,17 +202,83 @@ test('R64：真有中文时，评分输入与徽章结论都给肯定，也不�
   assert.doesNotMatch(text, /非中文/);
 });
 
-test('R64：既没中文也没别的本地化文档时，只承诺英文说明', () => {
-  const r = classifyRunnability({ chinese:{ hasCjk:false, hasChinese:false, localizedFiles:[] } });
-  assert.equal(r.chineseDoc, false);
-  assert.equal(r.hasChinese, false);
-  const text = stringsOf(buildInstallGuide(r)).join('\n');
-  assert.match(text, /英文说明/);
-  assert.doesNotMatch(text, /有中文说明|非中文/);
+// R71：上游区分不了"读过且只有英文"与"README 根本没拿到"（detectChinese 对两者都返回
+// hasCjk/hasChinese 全 false），所以句子只能说我们自己的查找动作，不能替项目下"只有英文"的结论。
+test('R71：没有中文时只说"我们没有查到中文说明"，不宣称项目"只有英文"（缺失与 false 两种输入都跑）', () => {
+  const inputs = [
+    { label:'chinese 字段缺失', chinese: undefined },
+    { label:'chinese 为 null', chinese: null },
+    { label:'chinese 明确全 false', chinese:{ hasCjk:false, hasChinese:false, localizedFiles:[] } },
+  ];
+  for (const { label, chinese } of inputs) {
+    const r = classifyRunnability({ releases:null, npm:null, pypi:null, chinese });
+    assert.equal(r.chineseDoc, false, label);
+    assert.equal(r.hasChinese, false, label);
+    const g = buildInstallGuide(r);
+    const text = stringsOf(g).join('\n');
+    assert.match(text, /我们没有查到中文说明/, label);
+    assert.doesNotMatch(text, /只有英文/, label);
+    assert.doesNotMatch(text, /有中文说明|非中文/, label);
+    const item = g.faq.find(f => f.q.includes('中文'));
+    assert.ok(item, label);
+    assert.match(item.a, /我们没有查到中文说明/, label);
+  }
+});
+
+// R70：none 恰恰是"证据缺失"时到达的档，不能在这里替项目断言"没有现成的安装方式"。
+test('R70：none 档只说"我们没有找到"，不宣称项目"没有现成的安装方式"', () => {
+  const inputs = [
+    { label:'什么都没查到', input:{ releases:null, npm:null, pypi:null } },
+    { label:'有同名 npm 包但归属不成立', input:{ npm:{ packageName:'x', repoMatches:false, hasBin:true, osIncludesWin:true } } },
+    { label:'归属成立但查不到支不支持 Windows', input:{ npm:{ packageName:'x', repoMatches:true, hasBin:true } } },
+    { label:'PyPI 归属没确认', input:{ pypi:{ packageName:'x', version:'1.0.0', requiresPython:null } } },
+    { label:'只有空下载链接', input:{ releases:{ windowsAsset:{ name:'a.exe', url:'' } } } },
+  ];
+  for (const { label, input } of inputs) {
+    const r = classifyRunnability(input);
+    assert.equal(r.kind, 'none', label);
+    const text = stringsOf(buildInstallGuide(r)).join('\n');
+    assert.match(text, /我们没有找到/, label);
+    assert.doesNotMatch(text, /没有现成的安装方式/, label);
+    assert.doesNotMatch(text, /这个项目没有/, label);
+  }
+});
+
+// R68：上游 lookupPyPI 没有归属字段，所以在拿到 repoMatches === true 之前，一条 pip install 都不下发。
+test('R68：PyPI 归属没确认（字段缺失或 false）时不下发 pip 命令，该档不成立', () => {
+  const missing = { packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10' };
+  const denied = { packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10', repoMatches:false };
+  for (const pypi of [missing, denied]) {
+    const r = classifyRunnability({ releases:null, npm:null, pypi });
+    assert.equal(r.kind, 'none');
+    assert.equal(r.command, null);
+    assert.equal(r.verified, false);
+    assert.equal(r.requiresPython, null);
+    assert.ok(r.notes.some(n => n.includes('没能确认它确实属于这个项目')));
+    const g = buildInstallGuide(r);
+    assert.equal(g.steps[1].command, undefined);
+    assert.doesNotMatch(stringsOf(g).join('\n'), /pip install/);
+  }
+});
+
+test('R68：PyPI 归属确认（repoMatches === true）时照常给 pip 命令', () => {
+  const r = classifyRunnability({ pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10', repoMatches:true } });
+  assert.equal(r.kind, 'pypiCompatible');
+  assert.equal(r.command, 'pip install markitdown');
+  assert.equal(r.verified, true);
+  assert.ok(r.notes.every(n => !n.includes('没能确认它确实属于这个项目')));
+});
+
+test('R68：PyPI 归属不成立不影响优先级更高的路径（有安装包照样给下载链接）', () => {
+  const r = classifyRunnability({ releases:{ windowsAsset:{ name:'a.exe', url:'https://x/a.exe' } },
+    pypi:{ packageName:'markitdown', repoMatches:false } });
+  assert.equal(r.kind, 'releaseWindows');
+  assert.equal(r.downloadUrl, 'https://x/a.exe');
+  assert.ok(r.notes.some(n => n.includes('没能确认它确实属于这个项目')));
 });
 
 test('chinese 整个缺失时两个中文结论都为 false，localizedFiles 为空数组', () => {
-  const r = classifyRunnability({ pypi:{ packageName:'x', version:'1.0.0', requiresPython:null } });
+  const r = classifyRunnability({ pypi:{ packageName:'x', version:'1.0.0', requiresPython:null, repoMatches:true } });
   assert.equal(r.chineseDoc, false);
   assert.equal(r.hasChinese, false);
   assert.deepEqual(r.localizedFiles, []);
@@ -224,9 +292,9 @@ test('归属校验失败：不产出命令，但有一条"为什么不敢给你�
   assert.ok(r.notes.some(n => n.includes('markitdown') && n.includes('没有声明自己来自这个项目')));
 });
 
-test('归属只约束 npm：npm 归属失败不影响 PyPI 路径', () => {
+test('归属是 npm 与 PyPI 各自的前提：npm 归属失败不影响归属已确认的 PyPI 路径', () => {
   const r = classifyRunnability({ npm:{ packageName:'markitdown', repoMatches:false, hasBin:true, osIncludesWin:true },
-    pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10' } });
+    pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10', repoMatches:true } });
   assert.equal(r.kind, 'pypiCompatible');
   assert.equal(r.command, 'pip install markitdown');
   assert.ok(r.notes.some(n => n.includes('没有声明自己来自这个项目')));
@@ -234,7 +302,7 @@ test('归属只约束 npm：npm 归属失败不影响 PyPI 路径', () => {
 
 test('npm 有 bin 但声明不支持 Windows：不给命令，有 PyPI 时落到 PyPI', () => {
   const r = classifyRunnability({ npm:{ packageName:'mac-only', repoMatches:true, hasBin:true, osIncludesWin:false, evidence:'repository' },
-    pypi:{ packageName:'mac-only', version:'1.0.0', requiresPython:null } });
+    pypi:{ packageName:'mac-only', version:'1.0.0', requiresPython:null, repoMatches:true } });
   assert.equal(r.kind, 'pypiCompatible');
   assert.ok(r.notes.some(n => n.includes('不支持 Windows')));
 });
@@ -277,7 +345,9 @@ test('evidence 照实透传：npm 说明凭什么认定归属，安装包带资�
   assert.equal(classifyRunnability({ npm:{ packageName:'a', repoMatches:true, hasBin:true, osIncludesWin:true, evidence:'bugs.url' } }).evidence, 'bugs.url');
   assert.equal(classifyRunnability({ npm:{ packageName:'a', repoMatches:true, hasBin:true, osIncludesWin:true, evidence:'homepage' } }).evidence, 'homepage');
   assert.equal(classifyRunnability({ releases:{ windowsAsset:{ name:'app-setup.exe', url:'https://x/a.exe' } } }).evidence, 'release asset: app-setup.exe');
-  assert.equal(classifyRunnability({ pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:null } }).evidence, 'pypi package: markitdown');
+  assert.equal(classifyRunnability({ pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:null, repoMatches:true } }).evidence, 'pypi package: markitdown');
+  // Task 10B 给 lookupPyPI 补上取证字段后，与 npm 一样原样透传（界面据此解释"凭什么认定归属"）。
+  assert.equal(classifyRunnability({ pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:null, repoMatches:true, evidence:'project_urls' } }).evidence, 'project_urls');
   assert.equal(classifyRunnability({}).evidence, null);
 });
 

@@ -15,7 +15,7 @@
 //   releaseWindows(18) > npmBinWin(16) > pypiCompatible(14) > npmNoBin(8) > buildFromSource(6) > dockerOnly(4) > none(0)
 // 顺序不能按"哪个先查到"来定：一个项目既有 Windows 安装包又能 npx 跑时，必须优先给"下载就能用"。
 //
-// 三条硬规矩（每条都对应一个真实缺陷）：
+// 五条硬规矩（每条都对应一个真实缺陷）：
 //   R51 —— 下载地址为空或缺失的 release 资产**不是**安装路径：宁可往下找别的路，
 //          也不给用户一个点不开的 🟢 徽章；verified 只有在真有可操作路径时才是 true。
 //   R48 —— 网站不知道访客电脑上装的是哪个版本的 Python，所以**绝不编造"兼容"结论**。
@@ -25,6 +25,12 @@
 //   R64 —— hasCjk（有本地化文档，喂评分）与 hasChinese（真有中文，管徽章）是两个不同的断言：
 //          chineseDoc 只认 hasCjk；hasChinese 与 localizedFiles 照实带出去，
 //          只有非中文本地化时界面必须说「有本地化文档（非中文）」，不能说"有中文说明"。
+//   R68 —— npm 与 PyPI 的**归属都是硬前提**。lookupPyPI 目前没有任何归属字段，所以在拿到
+//          repoMatches === true 之前不下发 pip install（宁可不给命令，R45 的方向）。
+//   R70/R71 —— 我们不知道的时候，句子的主语必须是**我们自己的查找动作**，不能是项目的事实：
+//          none 档只能说"我们没有找到…"（不能说"这个项目没有现成的安装方式"）；
+//          没有中文时只能说"我们没有查到中文说明"（上游分不清"读过且只有英文"与"README 没拿到"，
+//          所以"只有英文说明"是一句我们没证据的话）。
 //
 // 另有两条来自上游模块的硬约束：
 //   · 归属是任何 npm 路径的硬前提：repoMatches !== true 的 npm 结果**整条忽略**（连 npx / npm install 都不产出）；
@@ -54,7 +60,8 @@ const npmEvidence = (npm) => (isNonEmpty(npm.evidence) ? npm.evidence.trim() : '
  *   buildFromSource?: boolean, docker?: boolean }} [input]
  *   releases：fetchLatestRelease 的结果（可能为 null＝没问到），用到 windowsAsset { name, url }；
  *   npm：lookupNpm 的结果，用到 packageName / repoMatches / hasBin / osIncludesWin / evidence；
- *   pypi：lookupPyPI 的结果，用到 packageName / version / requiresPython；
+ *   pypi：lookupPyPI 的结果，用到 packageName / version / requiresPython，以及 Task 10B 会补上的
+ *     repoMatches / evidence（PyPI 归属也是硬前提，R68）；
  *   chinese：detectChinese 的结果，用到 hasCjk（喂评分）/ hasChinese（徽章）/ localizedFiles
  * @returns {{ kind: string, command: string|null, downloadUrl: string|null, evidence: string|null,
  *   verified: boolean, difficulty: 'green'|'yellow'|'red', chineseDoc: boolean, hasChinese: boolean,
@@ -102,19 +109,15 @@ export function classifyRunnability(input = {}) {
     ...extra,
   });
 
-  // ① releaseWindows（18 分，🟢）：有 Windows 安装包，**而且下载地址是真能点的**（R51）。
-  //    上游 releases.mjs 实测过：asset 缺 browser_download_url 时 url 是空串，那不是一条安装路径。
+  // 第一步：把"我们拒绝了哪条路、为什么"全部记进 notes（这些是我们**已经查到的事实**），
+  // 第二步才按优先级挑一条能用的路。顺序反过来（边挑边记）会让"挑中高优先档"时
+  // 低优先档的拒绝记录整条消失 —— 那些记录对用户和界面同样有价值（例如"npm/PyPI 上有个同名包，
+  // 但不是这个项目的"正是我们花大力气防住的那个坑），所以先记账、后选路。
   const asset = releases?.windowsAsset && typeof releases.windowsAsset === 'object' ? releases.windowsAsset : null;
-  if (asset) {
-    const url = isNonEmpty(asset.url) ? asset.url.trim() : '';
-    const name = isNonEmpty(asset.name) ? asset.name.trim() : '';
-    if (url !== '') {
-      return make('releaseWindows', {
-        downloadUrl: url,
-        evidence: name === '' ? 'release asset' : `release asset: ${name}`,
-      });
-    }
-    notes.push(`这个项目发过 Windows 安装包${name === '' ? '' : `（${name}）`}，但它的下载地址是空的，我们不能给你一个点不开的链接。`);
+  const assetUrl = asset !== null && isNonEmpty(asset.url) ? asset.url.trim() : '';
+  const assetName = asset !== null && isNonEmpty(asset.name) ? asset.name.trim() : '';
+  if (asset !== null && assetUrl === '') {
+    notes.push(`这个项目发过 Windows 安装包${assetName === '' ? '' : `（${assetName}）`}，但它的下载地址是空的，我们不能给你一个点不开的链接。`);
   }
 
   // （前置条件，不占档位）归属是任何 npm 路径的硬前提（R42）。repoMatches !== true 的结果**整条忽略**：
@@ -122,11 +125,6 @@ export function classifyRunnability(input = {}) {
   const npmOwned = npm !== null && npm.repoMatches === true && isNonEmpty(npm.packageName);
   if (npm !== null && npm.repoMatches !== true) {
     notes.push(`npm 上有一个${isNonEmpty(npm.packageName) ? `叫 ${npm.packageName.trim()} 的` : ''}包，但它没有声明自己来自这个项目，我们无法确认它是同一个东西，所以不敢让你照着它装。`);
-  }
-
-  // ② npmBinWin（16 分，🟢）：有可以直接跑的程序入口，而且声明支持 Windows。
-  if (npmOwned && npm.hasBin === true && npm.osIncludesWin === true) {
-    return make('npmBinWin', { command: `npx ${npm.packageName.trim()}`, evidence: npmEvidence(npm) });
   }
 
   // 有 bin 却装不了：声明不支持 Windows，或者干脆查不到它支不支持。
@@ -144,9 +142,35 @@ export function classifyRunnability(input = {}) {
     notes.push('我们查不到这个包有没有可以直接运行的程序入口，所以不敢把 npm 这一条算成安装方式。');
   }
 
-  // ③ pypiCompatible（14 分，🟡）：包存在且归属成立 = 一条独立于访客机器的真路径。
+  // （前置条件）R68：PyPI 的归属同样是硬前提。上游 lookupPyPI 目前只返回
+  //    { packageName, version, requiresPython }，**没有任何归属字段**；而"包名相同"从来不是证据
+  //    （npm 侧就是为此才做了 R42 取证：同名不同作者的包真实存在）。所以在拿到
+  //    repoMatches === true 之前，一条 pip install 都不下发 —— 宁可不给命令（R45 的方向）。
+  //    这是防御式实现：Task 10B 会给 lookupPyPI 补上 repoMatches / evidence（用 PyPI 的
+  //    project_urls / home_page 经 normalizeRepoUrl 归一化后严格比较，与 npm 侧同一套思路）。
+  const pypiOwned = pypi !== null && pypi.repoMatches === true && isNonEmpty(pypi.packageName);
+  if (pypi !== null && isNonEmpty(pypi.packageName) && pypi.repoMatches !== true) {
+    notes.push(`PyPI 上有一个叫 ${pypi.packageName.trim()} 的包，但我们没能确认它确实属于这个项目，所以不敢让你照着它装。`);
+  }
+
+  // 第二步：按优先级取第一条真的有证据的路径。
+  // ① releaseWindows（18 分，🟢）：有 Windows 安装包，**而且下载地址是真能点的**（R51）。
+  //    上游 releases.mjs 实测过：asset 缺 browser_download_url 时 url 是空串，那不是一条安装路径。
+  if (assetUrl !== '') {
+    return make('releaseWindows', {
+      downloadUrl: assetUrl,
+      evidence: assetName === '' ? 'release asset' : `release asset: ${assetName}`,
+    });
+  }
+
+  // ② npmBinWin（16 分，🟢）：有可以直接跑的程序入口，而且声明支持 Windows。
+  if (npmOwned && npm.hasBin === true && npm.osIncludesWin === true) {
+    return make('npmBinWin', { command: `npx ${npm.packageName.trim()}`, evidence: npmEvidence(npm) });
+  }
+
+  // ③ pypiCompatible（14 分，🟡）：包存在**且归属成立**（R68）= 一条独立于访客机器的真路径。
   //    R48：这里**不判断**访客的 Python 版本（静态网站根本不知道），只把要求原文带出去。
-  if (pypi !== null && isNonEmpty(pypi.packageName)) {
+  if (pypiOwned) {
     const name = pypi.packageName.trim();
     const requiresPython = isNonEmpty(pypi.requiresPython) ? pypi.requiresPython.trim() : null;
     if (requiresPython === null) {
@@ -157,7 +181,8 @@ export function classifyRunnability(input = {}) {
     notes.push('我们只能确认这个包装得上，装好之后具体敲什么命令，要看项目主页里的说明。');
     return make('pypiCompatible', {
       command: `pip install ${name}`,
-      evidence: `pypi package: ${name}`,
+      // 与 npm 同一口径：有取证字段就原样透传（Task 10B 会填），否则给一句能读的描述。
+      evidence: isNonEmpty(pypi.evidence) ? pypi.evidence.trim() : `pypi package: ${name}`,
       requiresPython,
     });
   }
@@ -239,7 +264,9 @@ function prepareText(kind, requiresPython) {
     case 'dockerOnly':
       return '需要先装一个叫 Docker 的工具。它体积比较大、装起来也慢，还要管理员权限。';
     case 'none':
-      return '这个项目没有现成的安装方式，你先打开项目主页，看它自己怎么写的。';
+      // R70：none 恰恰是"证据缺失"时才会到达的档，所以这里只能说我们自己的查找动作，
+      // 绝不能替项目断言"没有现成的安装方式"——那句结论我们没有证据（与 unknown kind 同一口径）。
+      return '我们没有找到可以放心推荐给你的安装方式；先打开项目主页，看它自己怎么写的安装说明。';
     default:
       return '先打开项目主页，看它自己写的"怎么安装"那一段；看不懂就把那一段复制给 AI 助手，让它翻译成大白话。';
   }
@@ -356,8 +383,10 @@ function uninstallText(kind, target) {
  */
 function chineseAnswer(hasChinese, chineseDoc) {
   if (hasChinese) return '有中文说明，项目里带了中文文档；遇到看不懂的地方直接看中文那份就行。';
-  if (chineseDoc) return '这个项目没有中文文档；它有本地化文档（非中文），所以界面上不会显示中文徽章，这是实话。内容可以先看英文那份，需要的时候用翻译工具。';
-  return '这个项目目前只有英文说明。碰到看不懂的段落，整段复制到翻译工具或 AI 助手里，让它翻译成大白话。';
+  // R71：上游区分不了"读过且只有英文"与"README 根本没拿到"（detectChinese 对两者都返回全 false），
+  // 所以这里只能说我们自己的查找动作："没有查到中文说明"在两种情况下都是真的。
+  if (chineseDoc) return '我们没有找到中文说明；它有本地化文档（非中文），所以界面上不会显示中文徽章，这是实话。内容可以先看英文那份，需要的时候用翻译工具。';
+  return '我们没有查到中文说明。碰到看不懂的段落，整段复制到翻译工具或 AI 助手里，让它翻译成大白话。';
 }
 
 /**

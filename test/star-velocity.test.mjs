@@ -176,6 +176,7 @@ test('级别 4：只有事件流时按 WatchEvent 时间窗外推，标 estimate
     return [
       { type:'WatchEvent', created_at:'2026-10-09T12:00:00Z' },
       { type:'PushEvent', created_at:'2026-10-09T23:00:00Z' },
+      { type:'WatchEvent', created_at:'2026-10-09T18:00:00Z' },
       { type:'WatchEvent', created_at:'2026-10-10T00:00:00Z' }
     ]; } };
   const v = await resolveVelocity(oldRepo, { client, dataDir:null, trendingByRepo:new Map(), now: NOW });
@@ -183,10 +184,46 @@ test('级别 4：只有事件流时按 WatchEvent 时间窗外推，标 estimate
   assert.equal(v.level, 4);
   assert.equal(v.confidence, 'estimated');
   assert.equal(v.source, 'events');
-  assert.equal(v.gained7d, 28);   // 2 起星标 / 12 小时 × 168 小时
+  assert.equal(v.gained7d, 42);   // 3 起星标 / 12 小时 × 168 小时
   assert.equal(v.gained3d, null); // 事件流给不出 3 日实测值
   assert.equal(urls.length, 1);
   assert.match(urls[0], /\/repos\/a\/b\/events\?per_page=100$/);
+});
+
+/** 造 n 起 WatchEvent，均匀铺在 spanHours 小时内，最后一起来正好落在"现在"。 */
+const watchBurst = (n, spanHours) => Array.from({ length: n }, (_, i) => ({
+  type: 'WatchEvent',
+  created_at: new Date(NOW.getTime() - (spanHours * 3_600_000 * i) / (n - 1)).toISOString()
+}));
+
+test('R54：100 起星标只覆盖 1 小时（最热仓库的典型形状）时级别 4 不可用，落到未知', async () => {
+  const client = { getJson: async () => watchBurst(100, 1) };
+  const v = await resolveVelocity(oldRepo, { client, dataDir:null, trendingByRepo:new Map(), now: NOW });
+
+  // 旧实现会拿 100/1×168 = 16800 当"数据"；窗口不足 1 小时外推倍率就超过 168×，那是噪声不是数据。
+  assert.equal(v.source, 'none');
+  assert.equal(v.gained7d, 0);
+  assert.equal(v.confidence, 'estimated');
+});
+
+test('R54：100 起星标覆盖 12.6 小时时级别 4 仍可用，估算量级合理', async () => {
+  const client = { getJson: async () => watchBurst(100, 12.6) };
+  const v = await resolveVelocity(oldRepo, { client, dataDir:null, trendingByRepo:new Map(), now: NOW });
+
+  assert.equal(v.source, 'events');
+  assert.equal(v.confidence, 'estimated');
+  assert.equal(v.gained7d, 1333);  // 100 / 12.6 × 168 ≈ 1333.3
+  assert.ok(v.gained7d < 3000);    // 量级合理：不是 16800 那种把热度轴打满的假数
+});
+
+test('R54：最小观测窗口与最少事件数（窗口 < 6 小时或星标 < 3 起即该级不可用）', () => {
+  const at = (hoursAgo) => new Date(NOW.getTime() - hoursAgo * 3_600_000).toISOString();
+  const watch = (hoursAgo) => ({ type:'WatchEvent', created_at: at(hoursAgo) });
+
+  assert.equal(estimateFromEvents([watch(1), watch(0.5), watch(0)], NOW), null);       // 1 小时窗口
+  assert.equal(estimateFromEvents([watch(5.9), watch(3), watch(0)], NOW), null);       // 差一点到 6 小时
+  assert.equal(estimateFromEvents([watch(12), watch(0)], NOW), null);                  // 只有 2 起星标
+  assert.equal(estimateFromEvents([watch(6), watch(3), watch(0)], NOW).gained7d, 84);  // 恰好 6 小时：可用（含等号）
 });
 
 test('gained3d 只在真有 3 日数据时给出，否则保持 null', async () => {
@@ -238,10 +275,12 @@ test('estimateFromEvents 用 7 天内的涨星事件外推，剔除其它类型�
   const est = estimateFromEvents([
     { type:'PushEvent', created_at: at(1) },
     { type:'WatchEvent', created_at: at(200) },  // 超过 7 天：不参与外推
+    { type:'WatchEvent', created_at: at(8) },
+    { type:'WatchEvent', created_at: at(5) },
     { type:'WatchEvent', created_at: at(2) }
   ], NOW);
-  assert.equal(est.gained7d, 84);                // 1 起星标 / 2 小时 × 168 小时
-  assert.ok(Math.abs(est.perHour - 0.5) < 1e-9);
+  assert.equal(est.gained7d, 63);                // 3 起星标 / 8 小时 × 168 小时
+  assert.ok(Math.abs(est.perHour - 0.375) < 1e-9);
 });
 
 test('estimateFromEvents 忽略未来时间戳与读不出的时间，无有效事件时返回 null', () => {

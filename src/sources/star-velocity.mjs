@@ -11,7 +11,8 @@
 //                               confidence:'reported'，source:'trending'
 //   级别 3  我们自己的历史 JSON（readSnapshotStars）—— 与 7 天前快照的实测差值；
 //                               3 天前也有快照时补上 gained3d。confidence:'measured'，source:'history-json'
-//   级别 4  /repos/{id}/events 的 WatchEvent 时间戳按窗口速率外推 ×168 小时。
+//   级别 4  /repos/{id}/events 的 WatchEvent 时间戳按窗口速率外推 ×168 小时，
+//                               但**只在观测窗口 ≥ 6 小时且星标事件 ≥ 3 起时**才可用（R54，见下）。
 //                               **这是估算**：confidence:'estimated'，source:'events'
 //   全都拿不到 → { gained7d: 0, gained3d: null, level: 4, confidence: 'estimated', source: 'none' }
 //
@@ -39,10 +40,34 @@
 //     （不带也返回 200），而本项目的 getJson 不提供逐请求自定义头，故沿用 client 统一固定的
 //     `2022-11-28`。端点两种都不介意，这里不为一个无害的头去改动已评审的 net 层。
 //
+// R54 —— 级别 4 的最小观测窗口（外推最容易造假的地方）：
+//   /events 只给最近 100 条事件，而**越热的仓库这 100 条覆盖得越短**：控制者实测
+//   `anthropics/claude-code` 的 100 条只覆盖 1.9 小时、`sst/opencode` 2.2 小时。窗口越短外推倍率越大：
+//     1 起 / 1 分钟  → 10080          5 起 / 1 小时    → 840
+//     100 起 / 1 小时 → **16800**      100 起 / 12.6 小时 → 1333（合理，正是实测 markitdown 的形状）
+//   误差**专门集中在最热的那批仓库**上，而它们正是榜单前排：一个 16800 的"估算值"会把 45 分热度轴
+//   直接打满。标了 estimated 不等于没事——那是拿噪声冒充数据。所以级别 4 只在
+//   **观测窗口 ≥ 6 小时 且 WatchEvent ≥ 3 起**时才成立（窗口不足 1 小时外推倍率就超过 168×，
+//   而两三起事件也给不出速率信号）；不满足即**该级不可用**，继续降到 source:'none'（gained7d: 0）。
+//   代价（明知并接受）：少数极热仓库会落到"未知"——但那是诚实答案，我们确实无法从几分钟的样本
+//   测出周速率；而且这类仓库通常已被更早的**级别 2（trending 官方 starsThisWeek，0 请求）**覆盖，
+//   损失有界。
+//
 // 时间口径：全部按 **UTC**。日序号 = floor(unix 毫秒 / 86400000)；
 // "最近 7 天" = 日序号 [N-7, N-1]（N = 今天的日序号，即已过完的 7 个 UTC 整日），
 // "最近 3 天" = [N-3, N-1] —— 与"7 天前 / 3 天前的快照差值"（级别 3）口径一致。
 // 当天（部分周）的增量落在日序号 N，天然在窗口之外，不会被当成"涨星崩塌"。
+//
+// 周桶与日线的对齐（R55，控制者用真实响应**证实**，不再是假设）：
+//   · 周起点是 **UTC 的星期天**（`getUTCDay() === 0`）；
+//   · `days[0]` 属于 `week` 那一天，`days[i]` 依次对应 `week + i` 个 UTC 日（1 日 = 1 个 UTC 日）；
+//   · **最后一个 `days` 元素是"当天"，可能为 0**（部分周）——它是"这一天还没过完"，
+//     绝不是"涨星崩塌"，故窗口只取已过完的整日。
+//   实证：`openai/math`（创建于 2026-10-06T21:47:02Z）的真实响应里
+//   `week = 1791072000` → 2026-10-04T00:00:00Z（UTC 星期天），
+//   `days = [0, 0, 5004, 5546, 1897, 703, 0]`，七笔之和 13150 正好等于同一对象的 `total`；
+//   其中 `days[2]` → 2026-10-06 = 5004，正是该仓库创建当天（当天即 5004 星，完全吻合），
+//   `days[6]` → 2026-10-10 = 0（当天尚未结束）。对齐关系由此有据可依。
 //
 // 本模块没有评分、没有榜单逻辑、没有 HTML 解析，也不缓存任何东西（缓存属于 client）。
 
@@ -57,6 +82,9 @@ const WEEK_DAYS = 7;
 const HISTORY_MAX_AGE_DAYS = 30 * WEEK_DAYS;
 // 外推窗口：7 天。
 const EXTRAPOLATE_HOURS = 168;
+// R54：级别 4 的最小观测窗口与最少事件数。窗口太短 → 外推倍率失真；样本太少 → 没有速率信号。
+const MIN_OBSERVATION_HOURS = 6;
+const MIN_WATCH_EVENTS = 3;
 
 /** UTC 日序号：把毫秒时间戳落到"第几天"，用来把周桶的日增量对到日历上。 */
 const utcDayIndex = (ms) => Math.floor(ms / DAY_MS);
@@ -84,6 +112,8 @@ const unavailable = () => ({ gained7d: 0, gained3d: null, level: 4, confidence: 
  * 响应结构（控制者实测）：`[{ week: <周起始的 unix 秒>, total: <该周结束时的累计星数>, days: [7 笔当日增量] }]`，
  * 周按从旧到新排列；新仓库的七笔 days 之和正好等于 total（5004+5546+1897+703 = 13150）。
  * 因此 days[i] 落在 `floor(week*1000/86400000) + i` 这一天，1 日 = 1 个 UTC 日。
+ * 对齐关系已由真实响应证实（R55，见文件头：周起点是 UTC 星期天，`days[0]` 就是 `week` 当天，
+ * 末位元素是"当天"、部分周里为 0）。
  * 结构不符 / 数值非法的那些天**不写入** Map：覆盖不到就是覆盖不到，绝不补 0。
  * @param {*} body 响应体
  * @returns {Map<number, number>} 日序号 → 当日涨星
@@ -214,7 +244,8 @@ function levelFromHistoryJson(repo, ownerRepo, dataDir, now) {
 
 /**
  * 级别 4：事件流外推（1 次请求，估算）。
- * 拿不到事件（fetchWatchEvents 返回 null / 空）或算不出速率时返回 null，由调用方兜底。
+ * 拿不到事件（fetchWatchEvents 返回 null / 空）或算不出速率时返回 null，由调用方兜底；
+ * R54 的"最小观测窗口 / 最少事件数"也在 estimateFromEvents 里把关，不满足即整级不可用。
  * @returns {Promise<object|null>}
  */
 async function levelFromEvents(client, ownerRepo, now) {
@@ -235,10 +266,16 @@ async function levelFromEvents(client, ownerRepo, now) {
  * 传入的应是**星标事件**列表（fetchWatchEvents 已经过滤过），所以这里对 `type` 缺失宽容
  * （视为调用方已过滤）；但只要 `type` 写了且不是 `WatchEvent`，就剔除 —— 防止误把推送/议题当涨星。
  * 窗口 = "现在"减去**最早一起**被计入事件的时间；超过 7 天的事件不参与（它们属于更早的行情）。
- * 零宽度窗口（最早一起正好发生在"现在"）返回 null：**绝不除零**，也不编一个无穷大的速度。
+ *
+ * 两条"证据不足"的硬性门槛（R54，宁可答"未知"，也不拿噪声冒充数据）：
+ *   · 观测窗口必须 **≥ 6 小时**：不足 1 小时时外推倍率就超过 168×（100 起 / 1 小时 → 16800 星，
+ *     而最热的仓库 100 条事件往往只覆盖 1–2 小时），误差专门砸在榜单前排；
+ *   · 被计入的星标事件必须 **≥ 3 起**：两三起给不出速率信号。
+ * 不满足任一条即返回 null（该级不可用）；零宽度窗口（最早一起正好发生在"现在"）同样返回 null：
+ * **绝不除零**，也不编一个无穷大的速度。
  * @param {Array<{type?: string, created_at?: string}>|null} events 星标事件列表
  * @param {Date} now "现在"（显式传入，便于测试固定时间）
- * @returns {{ perHour: number, gained7d: number }|null} 速率为 0 或无法计算时返回 null
+ * @returns {{ perHour: number, gained7d: number }|null} 证据不足、速率为 0 或无法计算时返回 null
  */
 export function estimateFromEvents(events, now) {
   if (!Array.isArray(events) || events.length === 0) return null;
@@ -261,7 +298,9 @@ export function estimateFromEvents(events, now) {
   if (watchCount === 0) return null;
 
   const windowHours = (nowMs - earliest) / HOUR_MS;
-  if (!(windowHours > 0)) return null; // 零宽度窗口：不除零
+  if (!(windowHours > 0)) return null;                            // 零宽度窗口：不除零
+  if (!(windowHours >= MIN_OBSERVATION_HOURS)) return null;       // R54：窗口太短，外推倍率失真
+  if (watchCount < MIN_WATCH_EVENTS) return null;                 // R54：样本太少，给不出速率
 
   const perHour = watchCount / windowHours;
   return { perHour, gained7d: Math.round(perHour * EXTRAPOLATE_HOURS) };

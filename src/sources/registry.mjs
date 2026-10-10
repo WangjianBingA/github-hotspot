@@ -248,67 +248,88 @@ export async function lookupPyPI(client, packageName) {
 }
 
 /**
- * 从版本串里取 [major, minor]；取不到返回 null。
- * 补丁号与预发布/预览后缀一律忽略（3.13.0rc1 → 3.13）。
- * @param {*} value 版本串，如 '3.10.11'、'v3.10'、3
- * @returns {[number, number]|null}
+ * 从版本串里取 [major, minor, patch] 三元组；取不到返回 null。
+ * 预发布/预览后缀被忽略（3.13.0rc1 → [3,13,0]）；
+ * **缺的段按 0 补齐**（'3.10' → [3,10,0]、'3' → [3,0,0]）——这是保守假设：
+ * 我们不知道补丁号就不敢假定它更高，于是"要求至少 X.Y.Z"会判不满足（失败关闭）。
+ * 注意这个假设对 `<=` / `<` 这类上界约束会偏宽松，但真实 requires_python 几乎只用下界，
+ * 而且比起"凭空补一个补丁号"，按 0 处理更诚实。
+ * @param {*} value 版本串，如 '3.10.11'、'v3.10'
+ * @returns {[number, number, number]|null}
  */
-const toMajorMinor = (value) => {
+const toVersion = (value) => {
   if (typeof value !== 'string') return null;
-  const matched = /^\s*v?(\d+)(?:\.(\d+))?/.exec(value);
+  const matched = /^\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(value);
   if (!matched) return null;
-  return [Number(matched[1]), Number(matched[2] ?? 0)];
+  return [Number(matched[1]), Number(matched[2] ?? 0), Number(matched[3] ?? 0)];
 };
 
 /**
  * 解析一条 PEP 440 版本约束（>=、<=、<、>、==、!=）。
- * 只允许后面跟数字（可带 .minor 与补丁/通配尾巴，如 >=3.10.2、==3.10.*）；
- * 其它写法（~=、^…、乱写的字符串）一律返回 null，表示"读不懂"。
+ * 允许 `major`、`major.minor`、`major.minor.patch`，以及末尾一个通配段（`==3.10.*`、`!=3.0.*`）；
+ * 其它写法（`~=`、`^…`、`3.10.2.1`、乱写的字符串）一律返回 null，表示"读不懂"（调用方按不兼容处理）。
  * @param {string} text 单条约束，如 '>=3.10'
- * @returns {{op: string, major: number, minor: number|null}|null}
+ * @returns {{op: string, major: number, minor: number|null, patch: number|null, wildcard: boolean}|null}
  */
 const parseClause = (text) => {
-  const matched = /^(<=|>=|==|!=|<|>)\s*v?(\d+)(?:\.(\d+))?/.exec(text);
+  const matched = /^(<=|>=|==|!=|<|>)\s*v?(\d+)((?:\.(?:\d+|\*))*)$/.exec(text.trim());
   if (!matched) return null;
-  const rest = text.slice(matched[0].length).trim();
-  if (rest !== '' && !/^(?:\.(?:\d+|\*))+$/.test(rest)) return null;
+  const parts = matched[3] === '' ? [] : matched[3].slice(1).split('.');
+  const stars = parts.filter((part) => part === '*').length;
+  // 通配只允许一个、只能在末尾，且按 PEP 440 只能配合 `==` / `!=`（前缀匹配）；
+  // 其余组合（'==3.*.2'、'>=3.10.*'）读不懂，按不兼容处理——宁可少给一条命令，也不失败开放。
+  if (stars > 1 || (stars === 1 && parts[parts.length - 1] !== '*')) return null;
+  if (stars === 1 && matched[1] !== '==' && matched[1] !== '!=') return null;
+  const numbers = parts.filter((part) => part !== '*').map(Number);
+  if (numbers.length > 2) return null;                    // 最多 major.minor.patch
   return {
     op: matched[1],
     major: Number(matched[2]),
-    minor: matched[3] === undefined ? null : Number(matched[3])
+    minor: numbers.length >= 1 ? numbers[0] : null,
+    patch: numbers.length >= 2 ? numbers[1] : null
   };
 };
 
 /**
- * 本机版本是否满足一条约束。只比 major.minor（字典序），== / != 在只写了 major 时只比 major。
- * @param {[number, number]} local 本机版本 [major, minor]
- * @param {{op: string, major: number, minor: number|null}} clause 解析后的约束
+ * 本机版本是否满足一条约束，按 (major, minor, patch) 三元组做字典序比较（R47）。
+ * 比较深度 = 约束里**写出来的数字段数**：写了 patch 就比三段；`==3.10.*` 的通配段不是数字，
+ * 所以只比两段（这是它"前缀匹配"的本意）；只写 major 就只比 major。约束里缺的段按 0 补齐。
+ * @param {[number, number, number]} local 本机版本三元组
+ * @param {{op: string, major: number, minor: number|null, patch: number|null}} clause 解析后的约束
  * @returns {boolean}
  */
-const satisfies = (local, { op, major, minor }) => {
-  const req = [major, minor ?? 0];
-  const cmp = (local[0] - req[0]) || (local[1] - req[1]);
+const satisfies = (local, { op, major, minor, patch }) => {
+  const req = [major, minor ?? 0, patch ?? 0];
+  const depth = minor === null ? 1 : (patch === null ? 2 : 3);
+  let cmp = 0;
+  for (let i = 0; i < depth && cmp === 0; i++) cmp = local[i] - req[i];
   switch (op) {
     case '>=': return cmp >= 0;
     case '<=': return cmp <= 0;
     case '>': return cmp > 0;
     case '<': return cmp < 0;
-    case '==': return minor === null ? local[0] === major : cmp === 0;
-    case '!=': return minor === null ? local[0] !== major : cmp !== 0;
+    case '==': return cmp === 0;
+    case '!=': return cmp !== 0;
     default: return false;
   }
 };
 
 /**
  * 判断本机 Python 是否满足包声明的 requires_python。
- * 逗号分隔的多条件是 AND 关系，必须全部满足。
+ * 逗号分隔的多条件是 AND 关系，必须全部满足；比较按 (major, minor, patch) 三元组，
+ * 但约束写到哪一层就比到哪一层（`>=3.10` 只比 3.10，`>=3.11.4` 会比补丁号；`==3.10.*` 只比 major.minor）。
  *
- * **这是有意的失败关闭（fail-closed，R44 已批准）**：读不懂的约束（`~=3.10` 这类简报未列出的
- * 运算符）或读不懂的本机版本一律判**不兼容**。两类错误的代价不对称：
+ * **这是有意的失败关闭（fail-closed，R44 已批准；R47 把唯一的失败开放处补掉了）**：
+ * 读不懂的约束（`~=3.10` 这类简报未列出的运算符）或读不懂的本机版本一律判**不兼容**；
+ * 声明 `>=3.11.4` 而本机 `3.11.2` 也必须判不兼容——给出一条 pip 自己会拒绝的命令，
+ * 比少给一条安装路径代价大得多。两类错误的代价不对称：
  * 误判"兼容"会让初学者照着一条装不上、或装出问题的命令折腾半天（还可能是我们唯一给出的路径）；
  * 误判"不兼容"只是让他少看到一条安装路径（其余路径与"未知"状态照旧）。
  * 代价说清楚：**不认识的约束会偏保守**——将来若支持更多运算（`~=`、`===`），
  * 要连同它的语义一起补测试，而不是把"读不懂"改成"放行"。
+ *
+ * 注意（配合 R48）：v2 是静态网站，**不知道访客的 Python 版本**，所以生产链路里并没有真实的
+ * `localPython`；本函数只是纯工具，下游不得用它伪造一个 `compatible: true`。
  * @param {string|null|undefined} requiresPython PyPI 的 requires_python 原文
  * @param {string} localPython 本机 Python 版本，如 '3.10.11'
  * @returns {boolean} 兼容为 true；null / 空串表示"不挑版本"，同样为 true
@@ -318,7 +339,7 @@ export function isPythonCompatible(requiresPython, localPython) {
   if (typeof requiresPython !== 'string') return false;
   if (requiresPython.trim() === '') return true;
 
-  const local = toMajorMinor(localPython);
+  const local = toVersion(localPython);
   if (local === null) return false;
 
   for (const raw of requiresPython.split(',')) {

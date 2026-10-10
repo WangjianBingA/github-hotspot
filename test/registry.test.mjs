@@ -320,15 +320,55 @@ test('PyPI 请求失败、结构不对或包名为空时返回 null，绝不抛�
 
 // ---------- isPythonCompatible 的边界 ----------
 
-test('isPythonCompatible 只比 major.minor，忽略补丁号与预发布后缀', () => {
-  assert.equal(isPythonCompatible('>=3.10.2', '3.10.0'), true);   // 只比 3.10，不看补丁
+test('isPythonCompatible 感知 patch：下界得不到满足就不判兼容（R47 推翻"只比 major.minor"）', () => {
+  // R47：这是安全网里唯一曾经失败开放的地方。声明 >=3.10.2 而本机是 3.10.0 时给"兼容"，
+  // 等于建议一条 pip 自己会拒绝的命令 —— 代价更大的那类错误，必须失败关闭。
+  assert.equal(isPythonCompatible('>=3.10.2', '3.10.0'), false);
+  assert.equal(isPythonCompatible('==3.10.2', '3.10.0'), false);
+  // 三条 R47 指定用例
+  assert.equal(isPythonCompatible('>=3.11.4', '3.11.2'), false);   // ① 同 major.minor，但本机补丁更低
+  assert.equal(isPythonCompatible('>=3.10.2', '3.10.5'), true);    // ② 补丁够高
+  assert.equal(isPythonCompatible('==3.10.*', '3.10.9'), true);    // ③ 通配仍按 major.minor 比较
+  // 通配形式无论本机补丁是多少都只看 major.minor
   assert.equal(isPythonCompatible('==3.10.*', '3.10.11'), true);
+  assert.equal(isPythonCompatible('!=3.10.*', '3.10.11'), false);
+  // 通配段写在更后面就是更细的前缀匹配：==3.10.2.* 要连补丁号一起对上
+  assert.equal(isPythonCompatible('==3.10.2.*', '3.10.2'), true);
+  assert.equal(isPythonCompatible('==3.10.2.*', '3.10.9'), false);
+  // 通配按 PEP 440 只能配合 == / !=，别的组合读不懂 → 不兼容（不许失败开放）
+  assert.equal(isPythonCompatible('>=3.10.*', '3.10.0'), false);
+  assert.equal(isPythonCompatible('==3.*.2', '3.10.2'), false);
+  assert.equal(isPythonCompatible('==3.10.2.1', '3.10.2'), false);
+  // 只写 major.minor 的约束仍然只比 major.minor（简报钉住的 >=3.10 / <3.15,>=3.10 语义不变）
+  assert.equal(isPythonCompatible('>=3.10', '3.10.0'), true);
+  assert.equal(isPythonCompatible('==3.10', '3.10.99'), true);
   assert.equal(isPythonCompatible('!=3.10', '3.10.11'), false);
   assert.equal(isPythonCompatible('>3.10', '3.10.11'), false);
-  assert.equal(isPythonCompatible('>=3.13', '3.13.0rc1'), true);  // 预发布后缀被忽略
+  // 上界带 patch 时同样按三元组比较
+  assert.equal(isPythonCompatible('<=3.10.2', '3.10.5'), false);
+  assert.equal(isPythonCompatible('<3.10.2', '3.10.1'), true);
+  // 真实数据：pypi.org/pypi/cryptography/json 的 requires_python 就带补丁号（实测）
+  const crypto = '!=3.9.0,!=3.9.1,>=3.9';
+  assert.equal(isPythonCompatible(crypto, '3.9.0'), false);   // 被 != 精确排除到补丁号
+  assert.equal(isPythonCompatible(crypto, '3.9.1'), false);
+  assert.equal(isPythonCompatible(crypto, '3.9.2'), true);
+  assert.equal(isPythonCompatible(crypto, '3.8.20'), false);  // 下界不满足
+  // 预发布后缀被忽略（3.13.0rc1 → 3.13.0）
+  assert.equal(isPythonCompatible('>=3.13', '3.13.0rc1'), true);
   assert.equal(isPythonCompatible('<=3.12', '3.13.0a1'), false);
   assert.equal(isPythonCompatible('', '3.10.11'), true);
   assert.equal(isPythonCompatible(undefined, '3.10.11'), true);
+});
+
+test('isPythonCompatible：本机版本缺 patch 段时按 (major, minor, 0) 保守处理（R47）', () => {
+  // 只有 '3.10' 时不敢假定补丁号是几：按 0 算，于是"要求至少 3.10.2"判不兼容（失败关闭）。
+  assert.equal(isPythonCompatible('>=3.10.2', '3.10'), false);
+  assert.equal(isPythonCompatible('==3.10.2', '3.10'), false);
+  assert.equal(isPythonCompatible('>=3.10.0', '3.10'), true);
+  assert.equal(isPythonCompatible('>=3.10.2', '3.10.0'), false);
+  // 连 minor 都没有的更粗版本同理按 0 补齐
+  assert.equal(isPythonCompatible('>=3.1', '3'), false);
+  assert.equal(isPythonCompatible('>=3.0', '3'), true);
 });
 
 test('isPythonCompatible 解析真实的多条件约束，读不懂的约束一律判不兼容', () => {

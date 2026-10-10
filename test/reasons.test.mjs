@@ -92,31 +92,33 @@ test('中文理由可以由分数推出，不必重复传 chineseDoc', () => {
   assert.ok(rs.some(r => r.includes('中文')));
 });
 
-test('已停止维护的项目只说"作者已停止维护"，不说更新与管事', () => {
+test('已停止维护的项目给停机结论，许可证这条依然为真、照旧输出', () => {
   const rs = buildReasons({
-    score: { parts: { installPath: 18, chinese: 7, pushRecency: 6, issueClosure: 8, license: 3 } },
+    score: { parts: { installPath: 18, chinese: 7, pushRecency: 8, release90d: 6, license: 4 } },
     repo: { pushedAt: new Date().toISOString(), archived: true },
     velocity: { gained7d: 500, confidence: 'measured' },
     runnability: { kind: 'releaseWindows', chineseDoc: true }
   });
   assert.ok(rs.includes('作者已停止维护'));
+  // 归档只说明"不再更新"，不代表"没有许可证"——这句仍然为真，必须照旧输出。
+  assert.ok(rs.includes('有明确的开源许可证，能放心用'));
   assert.ok(rs.every(r => !r.includes('仍在更新')));
-  assert.ok(rs.every(r => !r.includes('管事')));
+  assert.ok(rs.every(r => !r.includes('新版本')));
 });
 
-test('近期有提交、作者管事、许可证齐全各自成为口碑理由', () => {
+test('近期有提交、近 90 天发过新版本、许可证齐全各自成为口碑理由', () => {
   const rs = buildReasons({
-    score: { parts: { installPath: 18, chinese: 7, pushRecency: 6, issueClosure: 8, license: 3 } }
+    score: { parts: { installPath: 18, chinese: 7, pushRecency: 8, release90d: 6, license: 4 } }
   });
   assert.ok(rs.some(r => r.includes('仍在更新')));
-  assert.ok(rs.some(r => r.includes('管事')));
+  assert.ok(rs.some(r => r.includes('新版本')));
   assert.ok(rs.some(r => r.includes('许可证')));
   assert.ok(rs.length <= 5);
 });
 
-test('口碑分不足满分时不下"作者管事""许可证齐全"的结论', () => {
-  const rs = buildReasons({ score: { parts: { installPath: 18, chinese: 0, issueClosure: 2, license: 0 } } });
-  assert.ok(rs.every(r => !r.includes('管事')));
+test('没有发版、没有许可证就不下"发过新版本""许可证齐全"的结论', () => {
+  const rs = buildReasons({ score: { parts: { installPath: 18, chinese: 0, release90d: 0, license: 0 } } });
+  assert.ok(rs.every(r => !r.includes('新版本')));
   assert.ok(rs.every(r => !r.includes('许可证')));
 });
 
@@ -137,14 +139,14 @@ test('宁缺毋滥：没有证据就返回空数组，不为凑数编理由', ()
   assert.deepEqual(buildReasons({ velocity: { gained7d: 0, confidence: 'measured' } }), []);
   // 有零散证据时，只写有证据的那几条。
   assert.deepEqual(
-    buildReasons({ score: { parts: { license: 3 } } }),
+    buildReasons({ score: { parts: { license: 4 } } }),
     ['有明确的开源许可证，能放心用'],
   );
 });
 
 test('理由最多 5 条，宁缺毋滥', () => {
   const rs = buildReasons({
-    score: { parts: { installPath: 18, chinese: 7, pushRecency: 6, issueClosure: 8, license: 3 } },
+    score: { parts: { installPath: 18, chinese: 7, pushRecency: 8, release90d: 6, license: 4 } },
     repo: { pushedAt: new Date().toISOString() },
     velocity: { gained7d: 9999, confidence: 'measured' },
     runnability: { kind: 'releaseWindows', chineseDoc: true }

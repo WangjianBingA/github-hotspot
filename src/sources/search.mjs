@@ -86,8 +86,8 @@ const mapItem = (raw) => {
     stars: Number.isFinite(raw.stargazers_count) ? raw.stargazers_count : 0,
     forks: Number.isFinite(raw.forks_count) ? raw.forks_count : 0,
     openIssues: Number.isFinite(raw.open_issues_count) ? raw.open_issues_count : 0,
-    // search API 不返回已关闭 issue 数（要另开一次 core 请求才拿得到），一律 0 表示“不知道”，
-    // 不去猜：score 层的 issue 处理率会把 0 当成还没处理过，这是保守方向。
+    // GitHub 的 search 结果里根本没有"已关闭 issue 数"这个字段，一律 0 表示“不知道”。
+    // 口碑评分已不使用该字段（spec §6.1 移除了 issue 处理率），保留只是为了 RepoRef 形状稳定。
     closedIssues: 0,
     createdAt: typeof raw.created_at === 'string' ? raw.created_at : null,
     pushedAt: typeof raw.pushed_at === 'string' ? raw.pushed_at : null,

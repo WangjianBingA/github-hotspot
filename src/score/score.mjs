@@ -16,9 +16,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 // 口碑子项的满分口径（spec §6.1）。这些是判定阈值，不是分值，分值只从 weights.mjs 取。
 const FORK_RATIO_FULL = 0.15;
-const ISSUE_CLOSURE_FULL = 0.8;
 const PUSH_FULL_DAYS = 2;     // ≤2 天拿满 pushRecency
-const PUSH_PARTIAL_DAYS = 7;  // ≤7 天拿满分的 2/3（4 分），更久为 0
+const PUSH_PARTIAL_DAYS = 7;  // ≤7 天拿满分的 2/3（约 5.33 分），更久为 0
 
 // 硬性门槛口径（spec §6.2）。
 const GATE_MIN_STARS = 200;
@@ -39,13 +38,14 @@ export function scoreHot({ starsGained7d }) {
 }
 
 /**
- * 口碑分（六项子分合计 WEIGHTS.reputation = 30）：fork/star 比、issue 处理率、近期提交活跃、
+ * 口碑分（五项子分合计 WEIGHTS.reputation = 30）：fork/star 比、近期提交活跃、
  * 近 90 天有发版、许可证齐全、收藏持续增长，口径见 spec §6.1。
  * 比值类子项按"达到满分条件即满分"线性折算并封顶；缺字段或非法数值一律记 0，不抛错。
- * @param {{ forks?: number, stars?: number, openIssues?: number, closedIssues?: number,
+ * 刻意不算"issue 处理率"：GitHub 根本不返回 closed_issues，算了也只会得到一个假结论。
+ * @param {{ forks?: number, stars?: number,
  *   pushedAt?: string, license?: string|{spdx_id?: string}|null, hasRelease90d?: boolean }} repo 候选项目
  * @param {{ growing?: boolean|null }} [extra] 需要历史数据才能算的部分：growing 为相邻两期收藏是否增长，
- *   null/undefined 代表数据不足，给中性半分（1.5）而不是惩罚新项目
+ *   null/undefined 代表数据不足，给中性半分（4 / 2 = 2）而不是惩罚新项目
  * @param {Date} [now] 显式传入"现在"，用于算 pushedAt 距今天数；默认 new Date()
  * @returns {{ total: number, parts: Record<string, number> }}
  */
@@ -53,10 +53,6 @@ export function scoreReputation(repo, extra = {}, now = new Date()) {
   const stars = Number.isFinite(repo.stars) && repo.stars > 0 ? repo.stars : 0;
   const forks = Number.isFinite(repo.forks) && repo.forks > 0 ? repo.forks : 0;
   const forkRatio = stars > 0 ? forks / stars : 0;
-
-  const closed = Number.isFinite(repo.closedIssues) && repo.closedIssues > 0 ? repo.closedIssues : 0;
-  const open = Number.isFinite(repo.openIssues) && repo.openIssues > 0 ? repo.openIssues : 0;
-  const issueRate = closed + open > 0 ? closed / (closed + open) : 0;
 
   const pushedTs = Date.parse(repo.pushedAt);
   const ageDays = Number.isFinite(pushedTs) ? (now.getTime() - pushedTs) / DAY_MS : Infinity;
@@ -70,13 +66,13 @@ export function scoreReputation(repo, extra = {}, now = new Date()) {
   const spdx = typeof repo.license === 'string' ? repo.license : repo.license?.spdx_id;
   const license = spdx && spdx !== 'NOASSERTION' ? DETAIL_WEIGHTS.license : 0;
 
-  // 没有历史数据（null/undefined）给中性半分，不惩罚新项目；明确没增长才记 0。
+  // 没有历史数据（null/undefined）给中性半分（DETAIL_WEIGHTS.growth / 2 = 2），不惩罚新项目；
+  // 明确没增长才记 0。
   const noHistory = extra.growing === null || extra.growing === undefined;
   const growth = noHistory ? DETAIL_WEIGHTS.growth / 2 : extra.growing ? DETAIL_WEIGHTS.growth : 0;
 
   const parts = {
     forkRatio: DETAIL_WEIGHTS.forkRatio * Math.min(1, forkRatio / FORK_RATIO_FULL),
-    issueClosure: DETAIL_WEIGHTS.issueClosure * Math.min(1, issueRate / ISSUE_CLOSURE_FULL),
     pushRecency,
     release90d: repo.hasRelease90d ? DETAIL_WEIGHTS.release90d : 0,
     license,
@@ -116,7 +112,7 @@ export function calculateGrade(installPathScore) {
 /**
  * 把一条候选汇总成榜单里要落的评分对象（三段分数 + 总分 + 等级 + 置信度 + 子项明细）。
  * total = 热度 + 口碑 + 新手友好，三轴满分合计 100；grade 只看安装路径分；confidence 由涨星来源透传。
- * parts 里带上口碑六项与 installPath、chinese，详情页与"为什么上榜"都从这里取。
+ * parts 里带上口碑五项与 installPath、chinese，详情页与"为什么上榜"都从这里取。
  * @param {{ repo: object, runnability?: object, velocity?: object, extra?: object }} input
  *   velocity 形如 { gained7d, confidence }；extra 透传给 scoreReputation（如 growing）
  * @param {Date} [now] 显式传入"现在"，用于口碑里的近期提交活跃；默认 new Date()

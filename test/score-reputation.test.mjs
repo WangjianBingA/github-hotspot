@@ -1,22 +1,38 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { scoreReputation, scoreRepo, passesGates } from '../src/score/score.mjs';
+import { DETAIL_WEIGHTS, WEIGHTS } from '../src/config/weights.mjs';
 
-const base = { ownerRepo:'a/b', stars:1000, forks:150, openIssues:20, closedIssues:80,
+const base = { ownerRepo:'a/b', stars:1000, forks:150,
   pushedAt: new Date().toISOString(), license:'MIT', archived:false, language:'Go', hasRelease90d:true };
 
 test('各子项满分时口碑分等于 30', () => {
   assert.equal(scoreReputation(base, { growing: true }).total, 30);
 });
 
-test('issue 处理率按 closed/(closed+open) 计算', () => {
+test('口碑五项之和恰等于 WEIGHTS.reputation = 30', () => {
+  // 这条是护栏：日后有人改了某一项的分值却忘了总和，这里会先失败。
+  assert.equal(Object.values(DETAIL_WEIGHTS).reduce((a, b) => a + b, 0), WEIGHTS.reputation);
+  assert.equal(WEIGHTS.reputation, 30);
+});
+
+test('口碑子项里不再有 issue 处理率（closed_issues 在真实 API 里根本不存在）', () => {
   const r = scoreReputation({ ...base, openIssues: 80, closedIssues: 20 }, { growing: false });
-  assert.equal(r.parts.issueClosure, 2);   // 0.2 / 0.8 * 8
+  assert.equal('issueClosure' in r.parts, false);
+  assert.deepEqual(Object.keys(r.parts).sort(),
+    ['forkRatio', 'growth', 'license', 'pushRecency', 'release90d']);
+});
+
+test('fork/star 比按 0.15 线性折算，达到 0.15 即满分 8', () => {
+  assert.equal(scoreReputation({ ...base, stars: 1000, forks: 150 }, { growing: true }).parts.forkRatio,
+    DETAIL_WEIGHTS.forkRatio);
+  // 0.075 / 0.15 = 一半 → 4 分
+  assert.equal(scoreReputation({ ...base, stars: 2000, forks: 150 }, { growing: true }).parts.forkRatio, 4);
 });
 
 test('新项目没有历史增长数据时不惩罚，给中性分', () => {
   const r = scoreReputation(base, { growing: null });
-  assert.equal(r.parts.growth, 1.5);       // 3 分的一半
+  assert.equal(r.parts.growth, 2);         // 4 分的一半
 });
 
 test('archived 仓库被门槛挡下并给出原因', () => {
@@ -62,8 +78,9 @@ test('scoreRepo 的 parts 同时带上口碑子项，total 等于三轴之和', 
     velocity: { gained7d: 0, confidence: 'estimated' },
     extra: { growing: null },
   }, new Date());
-  assert.equal(s.parts.issueClosure, 8);
-  assert.equal(s.parts.growth, 1.5);
+  assert.equal('issueClosure' in s.parts, false);
+  assert.equal(s.parts.release90d, DETAIL_WEIGHTS.release90d);
+  assert.equal(s.parts.growth, 2);
   assert.equal(s.total, s.hot + s.reputation + s.runnable);
 });
 

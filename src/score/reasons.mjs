@@ -4,8 +4,6 @@
 // 所有用户可见的句子都必须走 spec §4.3 的术语翻译表——界面上不出现 star / fork / issue 这类行话。
 // 时间相关的判断走显式参数 now（默认 new Date() 只是方便调用），和 score.mjs 的约定一致。
 
-import { DETAIL_WEIGHTS } from '../config/weights.mjs';
-
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // 最多给 5 条理由：详情页一屏看得完，宁缺毋滥。
@@ -70,7 +68,7 @@ export function formatVelocityText(velocity) {
  * 缺字段、空对象、null 都不抛错；拿不到的事实就不写，绝不瞎猜——完全没有证据时返回空数组，
  * 不为了让理由看起来多几条而编造断言（'none' 这种确定性的结论只能来自确定性的输入）。
  * @param {{ score?: { parts?: object }, repo?: object, velocity?: object, runnability?: object }} [input]
- *   score 来自 scoreRepo（用到 parts 里的 installPath、chinese、pushRecency、issueClosure、license），
+ *   score 来自 scoreRepo（用到 parts 里的 installPath、chinese、pushRecency、release90d、license），
  *   runnability 形如 { kind, chineseDoc, verified }
  * @param {Date} [now] 显式传入"现在"，用于判断 pushedAt 是不是近 7 天；非 Date 则不看时间
  * @returns {string[]} 0 到 5 条中文短句
@@ -97,20 +95,21 @@ export function buildReasons(input = {}, now = new Date()) {
     reasons.push('有中文说明，照着做不容易卡住');
   }
 
-  // 4. 作者还管不管这个项目。已归档的项目只给一句诚实结论：
-  //    不得再说"仍在更新"，也不该同时说"作者很管事"（自相矛盾，spec §4.3）。
+  // 4. 作者还管不管这个项目。已归档的项目只给一句诚实结论："仍在更新""最近发过新版本"都与
+  //    "已停止维护"自相矛盾（spec §4.3），所以不给；许可证那条则是归档也不影响的事实，放到分支外。
   if (info.archived === true) {
     reasons.push('作者已停止维护');
   } else {
     if (isRecentlyPushed(info.pushedAt, nowTs) || parts.pushRecency > 0) {
       reasons.push('作者近 7 天仍在更新');
     }
-    if (parts.issueClosure >= DETAIL_WEIGHTS.issueClosure) {
-      reasons.push('作者很管事，大家的提问大多有人回应');
+    // 近 90 天有发版是拿得到的事实（releases/latest），有证据才说这一条。
+    if (parts.release90d > 0) {
+      reasons.push('作者最近还发过新版本');
     }
-    if (parts.license > 0) {
-      reasons.push('有明确的开源许可证，能放心用');
-    }
+  }
+  if (parts.license > 0) {
+    reasons.push('有明确的开源许可证，能放心用');
   }
 
   return reasons.slice(0, MAX_REASONS);

@@ -12,14 +12,15 @@ export const HOT_REFERENCE_STARS_PER_WEEK = 3000;
 // 三个榜单各取多少条。榜单条数只认这里，其他地方不得重复写数字。
 export const BOARD_SIZES = { weekly: 15, newbie: 15, classic: 30 };
 
-// 口碑轴的子项分值（合计 30）。
+// 口碑轴的子项分值（合计 30）。五项都只用真实拿得到的字段，没有数据的子项一律给中性分而不是判死。
+// 刻意不含"issue 处理率"：GitHub 的仓库详情与 search 结果里都没有 closed_issues，那个子项在生产
+// 环境恒为 0，会凭空断言"作者不管事"，详见 spec §6.1 的修订说明。
 export const DETAIL_WEIGHTS = {
-  forkRatio: 6,
-  issueClosure: 8,
-  pushRecency: 6,
-  release90d: 4,
-  license: 3,
-  growth: 3,
+  forkRatio: 8,
+  pushRecency: 8,
+  release90d: 6,
+  license: 4,
+  growth: 4,
 };
 
 // 新手友好轴的"安装路径"分档分值（满分 18）：按从易到难优先匹配一档。

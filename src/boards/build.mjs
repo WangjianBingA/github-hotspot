@@ -44,6 +44,10 @@ function comparator(sortValue) {
 
 /**
  * 把一个候选算成榜单条目：分数、等级、中文标记、中文理由都算好，rank 留到最后统一编。
+ *
+ * `extra` 与被评分一起**原样透传**（R41）：`extra.growing` 是"我们有没有问到收藏在增长"的
+ * 三态事实（true / false / null），导出层要把它照实写进 JSON 给界面看。这里若把它丢掉，
+ * 评分能算出中性半分、但界面拿到的只会是 null —— 那正是 R41 要修的"只有读取处、没有传递链"。
  * @param {{ repo: object, runnability?: object, velocity?: object, extra?: object }} candidate
  * @param {Date} now
  * @returns {object} 不含 rank 的中间结果
@@ -56,6 +60,8 @@ function toScored(candidate, now) {
     runnability,
     velocity,
     score,
+    // R41：两个三态事实之一住在 extra 里（另一个住在 repo.hasRelease90d），必须跟着条目走到底。
+    extra,
     grade: score.grade,
     chineseDoc: runnability?.chineseDoc === true,
     reasons: buildReasons({ score, repo, velocity, runnability }, now),
@@ -72,7 +78,7 @@ function toScored(candidate, now) {
  * @param {'weekly'|'newbie'|'classic'} boardId
  * @param {{ repo: object, runnability?: object, velocity?: object, extra?: object }[]} items 候选列表
  * @param {Date} [now] 显式传入"现在"，用于门槛的"近 7 天有提交"；默认 new Date()
- * @returns {{ rank: number, repo: object, runnability: object, velocity: object,
+ * @returns {{ rank: number, repo: object, runnability: object, velocity: object, extra: object,
  *   score: object, grade: string, chineseDoc: boolean, reasons: string[] }[]}
  *   认不出的 boardId 返回空榜，不抛错（榜单清单以 config/boards.mjs 为准）。
  */

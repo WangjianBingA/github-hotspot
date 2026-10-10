@@ -77,7 +77,9 @@ test('每条结果都是完整的 RankedItem，并带中文上榜理由', () => 
   for (const x of w) {
     assert.deepEqual(
       Object.keys(x).sort(),
-      ['chineseDoc', 'grade', 'rank', 'reasons', 'repo', 'runnability', 'score', 'velocity'],
+      // extra 于 Task 15 随 R41 加入：`extra.growing` 是"我们问没问到收藏在增长"的三态事实，
+      // 导出层要照实写进 JSON 给界面看，所以它必须跟着条目走出 buildBoard（其余 8 个字段保持原样）。
+      ['chineseDoc', 'extra', 'grade', 'rank', 'reasons', 'repo', 'runnability', 'score', 'velocity'],
     );
     assert.ok(Array.isArray(x.reasons));
     assert.ok(x.reasons.every((r) => typeof r === 'string' && r.length > 0));

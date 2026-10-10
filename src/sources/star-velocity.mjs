@@ -312,7 +312,12 @@ export function estimateFromEvents(events, now) {
  * 每级都自带"不适用就返回 null"的判断，且整个降级链**永不抛错**——最坏情况是
  * `{ gained7d: 0, gained3d: null, level: 4, confidence: 'estimated', source: 'none' }`。
  * @param {{ ownerRepo: string, createdAt?: string, stars?: number }} repo 仓库（至少要有 ownerRepo）
- * @param {{ client?: object, dataDir?: string|null, trendingByRepo?: Map<string, object>, now?: Date }} [ctx] 注入依赖
+ * @param {{ client?: object, dataDir?: string|null, trendingByRepo?: Map<string, object>, now?: Date,
+ *   freeOnly?: boolean }} [ctx] 注入依赖。
+ *   freeOnly（R53，控制者裁定）：只看**零成本**的级别 1/2/3，级别 0 与级别 4 一律不发请求。
+ *   调用方的用法是"先免费级跑全部候选，再对争榜候选开付费级"——冷启动那一轮里每个候选都落到
+ *   级别 4 的话，一次就能吃掉整轮 45 次额度的一半以上。跳过的级别不是"不可用"，
+ *   而是"这一轮我们还没去问"，所以这里返回 source:'none' 的兜底值，由调用方按"还没解析"处理。
  * @returns {Promise<{ gained7d: number, gained3d: number|null, level: 0|1|2|3|4,
  *   confidence: 'measured'|'reported'|'estimated', source: string }>}
  */
@@ -322,14 +327,17 @@ export async function resolveVelocity(repo, ctx = {}) {
   if (!Number.isFinite(now.getTime()) || ownerRepo === '') return unavailable();
 
   const createdAtMs = parseTime(repo?.createdAt);
+  // R53 免费级：级别 1/2/3 全是零请求的。levelFromHistory 与 levelFromEvents 一个吃 core 额度，
+  // 一个吃 core 额度 + 受 R54 门槛约束，所以免费模式下它们根本不进阶梯。
+  const freeOnly = ctx?.freeOnly === true;
 
   // 阶梯顺序即"精确度 vs 成本"的取舍顺序，保持不变（R52 只让不适用/买不起的级别**廉价地跳过**）。
   const ladder = [
-    () => levelFromHistory(ctx?.client, ownerRepo, now, createdAtMs),
+    () => (freeOnly ? null : levelFromHistory(ctx?.client, ownerRepo, now, createdAtMs)),
     () => levelFromNewRepo(repo, now, createdAtMs),
     () => levelFromTrending(ownerRepo, ctx?.trendingByRepo),
     () => levelFromHistoryJson(repo, ownerRepo, ctx?.dataDir, now),
-    () => levelFromEvents(ctx?.client, ownerRepo, now)
+    () => (freeOnly ? null : levelFromEvents(ctx?.client, ownerRepo, now))
   ];
 
   for (const level of ladder) {

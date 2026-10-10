@@ -143,7 +143,7 @@ test('403 且 reset 很近时先休眠到 reset 再重试一次', async () => {
   assert.deepEqual(sleeps, [60_000]);            // 等到 reset 的那一刻，而不是退避 1s
 });
 
-test('404 这类确定性失败不重试，直接放弃并降级', async () => {
+test('404 是服务器明确的"不存在"回答：不重试、也不全局降级（R43）', async () => {
   let calls = 0;
   const sleeps = [];
   const c = createClient({
@@ -153,7 +153,101 @@ test('404 这类确定性失败不重试，直接放弃并降级', async () => {
   assert.equal(await c.getJson('https://api.github.com/a'), null);
   assert.equal(calls, 1);                        // 不是 5xx，不该退避重试
   assert.deepEqual(sleeps, []);
+  // R43：404 的语义是"问到答案了，答案是'没有'"（例如这个仓库没发过 npm 包），
+  // 不是"我们没拿到答案"——绝不能因为一条 404 就把整轮标成数据不完整。
+  assert.equal(c.stats().degraded, false);
+});
+
+test('R43：其他明确的 4xx（400/401/422）同样是"问到了答案"，不重试、不降级', async () => {
+  for (const status of [400, 401, 422]) {
+    let calls = 0;
+    const c = createClient({
+      fetchImpl: async () => { calls++; return resp({ message:'nope' }, status); },
+      budget: 10, sleep: async () => {}
+    });
+    assert.equal(await c.getJson('https://api.github.com/a'), null, `HTTP ${status}`);
+    assert.equal(calls, 1, `HTTP ${status}`);
+    assert.equal(c.stats().degraded, false, `HTTP ${status}`);
+  }
+});
+
+test('R43：403 但额度还有余额（权限类）→ 明确回答，不重试、不降级', async () => {
+  let calls = 0;
+  const c = createClient({
+    fetchImpl: async () => {
+      calls++;
+      return resp({ message:'Resource not accessible by integration' }, 403, {
+        'x-ratelimit-limit': '5000',
+        'x-ratelimit-remaining': '4999',                                    // 余额还在 → 不是限流
+        'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 1800)   // 正常响应也会带 reset 头
+      });
+    },
+    budget: 10, sleep: async () => {}
+  });
+  assert.equal(await c.getJson('https://api.github.com/repos/a/b'), null);
+  assert.equal(calls, 1);
+  assert.equal(c.stats().degraded, false);
+});
+
+test('R43：429 本身就是限流，仍按限流处理（不当成"明确的回答"）', async () => {
+  const reset = Math.floor(Date.now() / 1000) + 3600;
+  const c = createClient({
+    fetchImpl: async () => resp({ message:'too many requests' }, 429, { 'x-ratelimit-remaining':'0', 'x-ratelimit-reset': String(reset) }),
+    budget: 10, sleep: async () => {}
+  });
+  await assert.rejects(() => c.getJson('https://api.github.com/a'), (e) => e instanceof RateLimitError && e.resetAt === reset);
   assert.equal(c.stats().degraded, true);
+});
+
+test('R43：403 且只带 retry-after（二级限流）仍算限流，并按 retry-after 等待', async () => {
+  const nowMs = 1_700_000_000_000;
+  const sleeps = [];
+  let calls = 0;
+  const c = createClient({
+    fetchImpl: async () => {
+      calls++;
+      return calls === 1
+        ? resp({ message:'secondary rate limit' }, 403, { 'retry-after': '30' })
+        : resp({ ok: true });
+    },
+    budget: 10, now: () => nowMs, sleep: async (ms) => { sleeps.push(ms); }
+  });
+  assert.deepEqual(await c.getJson('https://api.github.com/a'), { ok: true });
+  assert.equal(calls, 2);
+  assert.deepEqual(sleeps, [30_000]);
+});
+
+test('R43：5xx 重试耗尽仍然全局降级（保住原有语义）', async () => {
+  let calls = 0;
+  const c = createClient({
+    fetchImpl: async () => { calls++; return resp('err', 500); },
+    budget: 10, sleep: async () => {}
+  });
+  assert.equal(await c.getJson('https://api.github.com/a'), null);
+  assert.equal(calls, 3);
+  assert.equal(c.stats().degraded, true);        // 这才是"我们没拿到答案"
+});
+
+test('R43：额度耗尽被拦下仍然全局降级（保住原有语义）', async () => {
+  let calls = 0;
+  const c = createClient({
+    fetchImpl: async () => { calls++; return resp({ ok: true }); },
+    budget: 1, sleep: async () => {}
+  });
+  await c.getJson('https://api.github.com/a');
+  assert.equal(await c.getJson('https://api.github.com/b'), null);
+  assert.equal(calls, 1);                        // 预算不够时连请求都不发
+  assert.equal(c.stats().degraded, true);
+});
+
+test('R43：一条 404 之后成功请求仍不至于把整轮标成降级', async () => {
+  const c = createClient({
+    fetchImpl: async (url) => (url.endsWith('/missing') ? resp({ message:'Not Found' }, 404) : resp({ ok: true })),
+    budget: 10, sleep: async () => {}
+  });
+  assert.equal(await c.getJson('https://registry.npmjs.org/missing', { api: 'none' }), null);
+  assert.deepEqual(await c.getJson('https://api.github.com/repos/a/b'), { ok: true });
+  assert.deepEqual(c.stats(), { coreCalls: 1, searchCalls: 0, cacheHits: 0, degraded: false });
 });
 
 test('core 与 search 分开计数，但共用同一个总预算', async () => {

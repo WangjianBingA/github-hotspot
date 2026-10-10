@@ -283,7 +283,7 @@ github-hotspot/
 | **口碑** | 30 | fork/star 比 6 + issue 处理率 8 + 近期提交活跃 6 + 近 90 天有发版 4 + 许可证齐全 3 + 收藏持续增长 3 |
 | **新手友好** | 25 | 安装路径 0-18 + 中文文档 0-7 |
 
-**新手友好子项（v1 的"可落地分"更名，口径不变）**
+**口碑子项的确定性口径**（全部只用已获取字段，无需额外请求，可单测；六项之和 = 30 = `WEIGHTS.reputation`）
 
 | 子项 | 计算方式 | 满分条件 |
 |---|---|---|
@@ -294,7 +294,9 @@ github-hotspot/
 | 许可证齐全 | `license.spdx_id` 存在且非 `NOASSERTION` | 存在满分 |
 | 收藏持续增长 | 历史 JSON 相邻两期差值 > 0 | 有增长满分（数据不足给中性分，不惩罚新项目） |
 
-**安装路径分档**：release 有 Windows 资产 18 / npm `bin`+`win32` 16 / PyPI 有包 14 / npm 无 `bin` 8 / 需自行编译 6 / 仅 Docker 4。
+**新手友好子项**（v1 的"可落地分"更名，口径不变；安装路径 0-18 + 中文文档 0-7 = 25 = `WEIGHTS.runnable`）
+
+**安装路径分档（0-18）**：release 有 Windows 资产 18 / npm `bin`+`win32` 16 / PyPI 有包 14 / npm 无 `bin` 8 / 需自行编译 6 / 仅 Docker 4。
 
 **中文文档分**：README 中日韩字符占比 ≥ 3% → 4 分；另存在 `README.zh-CN.md` / `README_CN.md` / `docs/*.zh*` → 再 +3。
 （实测校准：HelloGitHub 5.35% 命中；markitdown 0% 正确排除；opencode 0.26% 但靠 `README.ja.md` 正确识别为有本地化文档。）

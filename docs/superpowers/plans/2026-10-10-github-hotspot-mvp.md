@@ -206,7 +206,7 @@ git commit -m "feat(store): JSON 数据层（文件即数据库）"
 **Interfaces:**
 - Consumes: 无
 - Produces:
-  - `src/config/weights.mjs` 导出 `WEIGHTS={hot:45,reputation:30,runnable:25}`、`HOT_REFERENCE_STARS_PER_WEEK=3000`、`BOARD_SIZES={weekly:15,newbie:15,classic:30}`、`DETAIL_WEIGHTS={forkRatio:6,issueClosure:8,pushRecency:6,release90d:4,license:3,growth:3}`、`RUNNABLE_POINTS={releaseWindows:18,npmBinWin:16,pypiCompatible:14,npmNoBin:8,buildFromSource:6,dockerOnly:4,none:0}`、`CHINESE_POINTS={readmeRatio:4,localizedFile:3}`、`CHINESE_RATIO_THRESHOLD=0.03`
+  - `src/config/weights.mjs` 导出 `WEIGHTS={hot:45,reputation:30,runnable:25}`、`HOT_REFERENCE_STARS_PER_WEEK=3000`、`BOARD_SIZES={weekly:15,newbie:15,classic:30}`、`DETAIL_WEIGHTS={forkRatio:8,pushRecency:8,release90d:6,license:4,growth:4}`（2026-10-10 起；五项之和必须 = 30 = `WEIGHTS.reputation`）、`RUNNABLE_POINTS={releaseWindows:18,npmBinWin:16,pypiCompatible:14,npmNoBin:8,buildFromSource:6,dockerOnly:4,none:0}`、`CHINESE_POINTS={readmeRatio:4,localizedFile:3}`、`CHINESE_RATIO_THRESHOLD=0.03`
   - `scoreHot({ starsGained7d }): number` —— 返回 0–45
 
 - [ ] **Step 1: 写失败测试** `test/score-hot.test.mjs`
@@ -287,6 +287,7 @@ git commit -m "feat(score): 热度分与 log 归一化边界"
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { scoreReputation, passesGates } from '../src/score/score.mjs';
+import { DETAIL_WEIGHTS, WEIGHTS } from '../src/config/weights.mjs';
 
 const base = { ownerRepo:'a/b', stars:1000, forks:150, openIssues:20, closedIssues:80,
   pushedAt: new Date().toISOString(), license:'MIT', archived:false, language:'Go', hasRelease90d:true };
@@ -295,14 +296,14 @@ test('各子项满分时口碑分等于 30', () => {
   assert.equal(scoreReputation(base, { growing: true }).total, 30);
 });
 
-test('issue 处理率按 closed/(closed+open) 计算', () => {
-  const r = scoreReputation({ ...base, openIssues: 80, closedIssues: 20 }, { growing: false });
-  assert.equal(r.parts.issueClosure, 2);   // 0.2 / 0.8 * 8
+test('口碑五项之和恰为 30，防止日后改单项却忘了总和', () => {
+  assert.equal(Object.values(DETAIL_WEIGHTS).reduce((a, b) => a + b, 0), WEIGHTS.reputation);
+  assert.equal(WEIGHTS.reputation, 30);
 });
 
 test('新项目没有历史增长数据时不惩罚，给中性分', () => {
   const r = scoreReputation(base, { growing: null });
-  assert.equal(r.parts.growth, 1.5);       // 3 分的一半
+  assert.equal(r.parts.growth, 2);         // 4 分的一半
 });
 
 test('archived 仓库被门槛挡下并给出原因', () => {
@@ -861,10 +862,19 @@ git commit -m "feat(sources): npm/PyPI 直查与包名归属校验"
 
 **Files:**
 - Create: `src/sources/releases.mjs`, `test/releases.test.mjs`
+- Modify（仅 R40 所必需）: `src/score/score.mjs`、`test/score-reputation.test.mjs`
 
 **Interfaces:**
 - Consumes: `client.getJson(url, { api: 'core' })`
-- Produces: `pickWindowsAsset(assets): { name, url, size } | null`；`fetchLatestRelease(client, ownerRepo): Promise<{ tagName, publishedAt, windowsAsset } | null>`
+- Produces: `pickWindowsAsset(assets): { name, url, size } | null`；`fetchLatestRelease(client, ownerRepo): Promise<Release | null>`；`hasRecentRelease(release, now, days = 90): boolean | null`
+  - `Release = { kind: 'release', tagName, publishedAt, assets, windowsAsset } | { kind: 'no-release' }`
+  - **R40（控制者插入，必做）**：`release90d` 是口碑分里 6 分的一项，但在本任务之前**没有任何生产端**给它提供数据（全仓库只有读取处，没有写入处），导致口碑轴在生产环境实际只能拿 24/30。本任务必须补上生产者，且必须是**三态**，不得把"没问到"当成"确认没有"：
+    - 用 `GET /repos/{ownerRepo}/releases?per_page=1`（**列表**端点）而不是 `/releases/latest`：列表端点在没有发布时返回 `200 []`，而 `latest` 返回 404，二者与"请求失败"在客户端都以 `null` 出现，无法区分。
+    - `200 []` → `{ kind: 'no-release' }`（**确认**没有任何发布）
+    - `200 [r]` → `{ kind: 'release', tagName, publishedAt, assets, windowsAsset }`
+    - `null`（请求失败/额度耗尽）→ `null`（**未知**）
+    - `hasRecentRelease(...)` 返回 `true`（release 且 publishedAt 在 days 天内）/ `false`（`no-release`，或 release 但超出窗口）/ `null`（未知）
+  - 同时**窄范围**修改 `src/score/score.mjs`：`hasRelease90d === null`（未知）时必须给**中性半分**（`DETAIL_WEIGHTS.release90d / 2` = 3），与 `growth` 的既有口径一致；`false` 才给 0。理由：把"没问到"记 0 会让界面显示"近 90 天有发版：0 分"——一句我们并无证据的话，正是本项目刚修掉两次的同类缺陷。此改动只许涉及 `release90d` 一项，别的不许动。
 
 - [ ] **Step 1: 写失败测试** `test/releases.test.mjs`
 
@@ -894,6 +904,28 @@ test('空数组与非法输入返回 null', () => {
   assert.equal(pickWindowsAsset([]), null);
   assert.equal(pickWindowsAsset(null), null);
 });
+
+test('三态：确认没有发布 / 有发布但超窗 / 未知，三者必须互不混淆（R40）', () => {
+  const now = new Date('2026-10-10T00:00:00Z');
+  assert.equal(hasRecentRelease({ kind: 'no-release' }, now), false);
+  assert.equal(hasRecentRelease({ kind: 'release', publishedAt: '2026-09-01T00:00:00Z' }, now), true);
+  assert.equal(hasRecentRelease({ kind: 'release', publishedAt: '2026-01-01T00:00:00Z' }, now), false);
+  assert.equal(hasRecentRelease(null, now), null);          // 没问到 ≠ 没有
+});
+
+test('列表端点返回空数组时判为"确认没有发布"，请求失败时判为"未知"', async () => {
+  const ok = { getJson: async () => [] };
+  assert.deepEqual(await fetchLatestRelease(ok, 'a/b'), { kind: 'no-release' });
+  const fail = { getJson: async () => null };
+  assert.equal(await fetchLatestRelease(fail, 'a/b'), null);
+});
+
+test('未知的发版信息按中性半分计，不当作"确认没有"（R40）', () => {
+  const unknown = scoreReputation({ ...base, hasRelease90d: null }, { growing: true });
+  assert.equal(unknown.parts.release90d, DETAIL_WEIGHTS.release90d / 2);
+  const none = scoreReputation({ ...base, hasRelease90d: false }, { growing: true });
+  assert.equal(none.parts.release90d, 0);
+});
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -903,7 +935,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-优先级：`.exe` > `.msi` > 含 `windows|win64|win32` 的压缩包；显式排除含 `darwin|macos|linux|android|ios` 的名字。`fetchLatestRelease` 请求 `/repos/{ownerRepo}/releases/latest`，404 返回 `null`。
+优先级：`.exe` > `.msi` > 含 `windows|win64|win32` 的压缩包；显式排除含 `darwin|macos|linux|android|ios` 的名字。`fetchLatestRelease` 按 R40 请求 **`/repos/{ownerRepo}/releases?per_page=1`**（列表端点），`200 []` → `{ kind: 'no-release' }`，`200 [r]` → `{ kind: 'release', … }`，`null` → `null`。`hasRecentRelease` 实现三态判定。另按 R40 在 `src/score/score.mjs` 的 `scoreReputation` 里把 `hasRelease90d === null` 记为中性半分（`DETAIL_WEIGHTS.release90d / 2`），并在 `test/score-reputation.test.mjs` 里补一条对应断言。
 
 - [ ] **Step 4: 运行确认通过**
 

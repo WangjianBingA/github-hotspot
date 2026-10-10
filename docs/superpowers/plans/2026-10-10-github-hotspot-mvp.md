@@ -1109,7 +1109,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-CJK 集合 `[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]`，`ratio = 命中数 / 文本长度`，阈值取 `CHINESE_RATIO_THRESHOLD`。本地化文件名匹配 `/(^|\/)(README|readme)[._-]?(zh|cn)([._-](CN|TW|HK))?\.(md|markdown)$/`。`fetchChineseEvidence` 请求 `https://raw.githubusercontent.com/{ownerRepo}/{defaultBranch}/README.md` 及最多 3 个候选本地化文件名。`buildReputationInput` 映射为 `scoreReputation` 所需形状。
+CJK 集合 `[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]`，`ratio = 命中数 / 文本长度`，阈值取 `CHINESE_RATIO_THRESHOLD`。本地化文件名匹配 `/(^|\/)(README|readme)[._-]?(zh|cn)([._-](CN|TW|HK))?\.(md|markdown)$/`。`fetchChineseEvidence` 请求 `https://raw.githubusercontent.com/{ownerRepo}/{defaultBranch}/README.md` 及**最多 4 个**候选本地化文件名（实测实现探测 `README.zh-CN.md` / `README_CN.md` / `README.zh.md` / `README.ja.md`，共 ≤5 次 `api:'none'` 请求，不消耗 GitHub 额度）。**R59（后续补充）**：检测须同时产出 `hasCjk`（喂计分：CJK 占比达标或存在任意本地化文件）与 `hasChinese`（只管徽章：中文文件名存在，或汉字占比达标且假名占比 < 0.01），两者刻意不同——只有日文文档时不得对中文用户宣称"有中文说明"。**R63（后续修正）**：`docs/*.zh*` 的中文判定必须拿**完整路径**去匹配（该正则含字面量 `docs/`），拿剥掉目录前缀的文件名去匹配会变成死代码。`buildReputationInput` 映射为 `scoreReputation` 所需形状。
 
 - [ ] **Step 4: 运行确认通过**
 

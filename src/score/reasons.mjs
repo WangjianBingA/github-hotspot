@@ -27,15 +27,22 @@ const INSTALL_TEXTS = new Map([
   ['npmNoBin', '要先装好 Node，再照说明敲命令'],
   ['buildFromSource', '要自己动手编译，适合愿意折腾的人'],
   ['dockerOnly', '要先用 Docker 装好才行，适合愿意折腾的人'],
-  ['none', '暂时没有现成的安装方式，得自己动手'],
+  // R73：这一句曾经是"暂时没有现成的安装方式，得自己动手"，但那是在断言**项目的事实**，
+  // 而这一档恰恰是我们不知道的状态——classifyRunnability 走到 'none' 的常见成因正是证据缺失
+  // （没查到包、查到的包无法确认属于该项目、命令行工具不支持 Windows），
+  // 所以在 none 档只能报告**我们自己查找的结果**，并给一条能走的下一步（与 runnability.mjs
+  // 的「我们没有找到可以放心推荐给你的安装方式」同一口径）。
+  ['none', '我们没有找到可以放心推荐给你的安装方式，可以打开项目主页自己看一眼'],
 ]);
 
 // kind 认不出来（缺失或未知）但分数说有安装路径时用这句：知道有路可走，只是不知道是哪一种。
 const INSTALL_GENERIC_TEXT = '有现成的安装方式，跟着说明就能装好';
 
 /**
- * 安装方式的一句话。必须区分"查过了，确实没有"和"没人告诉我们有没有"：
- * - kind 认识（含 'none'）→ 照表说话，只有 'none' 才是确定性的否定句；
+ * 安装方式的一句话。必须区分"我们有话说"和"没人告诉我们有没有"：
+ * - kind 认识（含 'none'）→ 照表说话；注意 'none' 那一句说的是**我们的查找动作**，不是项目的事实：
+ *   走到 'none' 的常见成因是证据缺失（没查到包、包无法确认属于该项目、命令行工具不支持 Windows），
+ *   此时我们并不知道这个项目有没有安装方式，不能替它下否定结论（R70/R73 同一口径）；
  * - kind 缺失或未知 → 仅在 installPath > 0 时给泛化句；连分数都没有就什么都不说（返回 ''），
  *   因为 score.mjs 把未知 kind 也记 0 分，0 分不等于"确定没有安装方式"。
  * @param {string} [kind] RUNNABLE_POINTS 的键
@@ -66,7 +73,7 @@ export function formatVelocityText(velocity) {
  * 生成中文上榜理由（最多 5 条），按"最想知道的排最前"排序：
  * 本周新增收藏 → 怎么装 → 有没有中文说明 → 作者还管不管这个项目。
  * 缺字段、空对象、null 都不抛错；拿不到的事实就不写，绝不瞎猜——完全没有证据时返回空数组，
- * 不为了让理由看起来多几条而编造断言（'none' 这种确定性的结论只能来自确定性的输入）。
+ * 不为了让理由看起来多几条而编造断言（'none' 档同样只能说我们自己的查找动作，绝不替项目下结论，R73）。
  * @param {{ score?: { parts?: object }, repo?: object, velocity?: object, runnability?: object }} [input]
  *   score 来自 scoreRepo（用到 parts 里的 installPath、chinese、pushRecency、license），
  *   runnability 形如 { kind, chineseDoc, verified }，

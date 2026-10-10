@@ -68,13 +68,16 @@ test('每档安装方式都有一句给新手看的中文说法', () => {
   assert.match(kindText('npmNoBin'), /Node/);
   assert.match(kindText('buildFromSource'), /编译/);
   assert.match(kindText('dockerOnly'), /Docker/);
-  assert.match(kindText('none'), /没有现成的安装方式/);
+  assert.match(kindText('none'), /我们没有找到/);
 });
 
-test('"查过了确实没有"与"没人告诉我们有没有"不能混为一谈', () => {
-  // ① kind 明确是 none：查过了，确实没有安装方式——这句否定句有证据，可以说。
+test('认识的 kind 与"没人告诉我们有没有"不能混为一谈（R73 后 none 也不断言项目事实）', () => {
+  // ① kind 明确是 none：这一档有话说，但说的是**我们的查找动作**——classifyRunnability 走到 none
+  //    的常见原因恰恰是证据缺失（没查到包 / 包无法确认属于该项目 / 命令行工具不支持 Windows），
+  //    所以它绝不能断言"这个项目没有现成的安装方式"（R70/R73 同一口径）。
   const told = buildReasons({ score: { parts: { installPath: 0 } }, runnability: { kind: 'none' } });
-  assert.ok(told.some(r => r.includes('没有现成的安装方式')), 'none 要给出确定的否定句');
+  assert.ok(told.some(r => r.includes('我们没有找到')), 'none 要说清我们查过了');
+  assert.ok(told.every(r => !r.includes('没有现成的安装方式')), 'R73：不得替项目下否定结论');
 
   // ② kind 缺失：没人告诉我们，score.mjs 同样记 0 分，但 0 分 ≠ 确定没有，所以一句都不说。
   const unknown = buildReasons({ score: { parts: { installPath: 0 } } });
@@ -88,6 +91,23 @@ test('"查过了确实没有"与"没人告诉我们有没有"不能混为一谈'
   const scored = buildReasons({ score: { parts: { installPath: 18 } } });
   assert.ok(scored.some(r => r.includes('有现成的安装方式')));
   assert.ok(scored.every(r => !r.includes('没有现成的安装方式')));
+});
+
+// R73：旧文案 '暂时没有现成的安装方式，得自己动手' 断言的是**项目的事实**，而 none 档恰恰是
+// 我们不知道的那种状态（证据缺失）。本项目已修正八次同类缺陷，因此：
+//   · 主语必须是我们的查找动作（与 runnability.mjs 的「我们没有找到可以放心推荐给你的安装方式」同一口径）；
+//   · 不出现"没有现成的安装方式"这个被推翻的说法；
+//   · 不给一条关于用户机器的断言，只给一条能走的下一步（去项目主页看它自己怎么写的）。
+test('R73：none 档只说"我们没有找到"，不再断言"没有现成的安装方式"', () => {
+  const rs = buildReasons({ score: { parts: { installPath: 0 } }, runnability: { kind: 'none' } });
+  const text = rs.join(' | ');
+  assert.ok(text.includes('安装'), `none 档仍要给出这一条，实际：${JSON.stringify(rs)}`);
+  assert.ok(!text.includes('没有现成的安装方式'), `不得再替项目下否定结论，实际：${JSON.stringify(rs)}`);
+  assert.ok(text.includes('我们没有找到'), `主语必须是我们的查找动作，实际：${JSON.stringify(rs)}`);
+  assert.ok(text.includes('项目主页'), `要给一条可走的下一步，实际：${JSON.stringify(rs)}`);
+  // 这句话里不得出现任何自称"这个项目没有…"的断言式说法。
+  assert.ok(!text.includes('这个项目'), `不得断言项目事实，实际：${JSON.stringify(rs)}`);
+  assert.ok(rs.length === 1, `这一档只产出安装方式一条，实际：${JSON.stringify(rs)}`);
 });
 
 test('中文理由可以由分数推出，不必重复传 chineseDoc', () => {

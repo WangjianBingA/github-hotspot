@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test",
     "collect": "node src/cli.mjs collect",
     "start": "node src/cli.mjs serve",
     "demo": "node src/cli.mjs serve --demo"

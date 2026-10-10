@@ -1,0 +1,209 @@
+// GitHub 好玩榜 —— 串行网络客户端。
+// 这是整个项目唯一的网络出入口，只负责"怎么把请求发出去"：
+//   1. 全局严格串行：同一时刻最多 1 个在途请求（并发打 github.com 会被它自己限速到超时）；
+//   2. 额度预算：预算用尽时连请求都不发，返回 null 并标记 degraded（调用方按"本轮没数据"处理）；
+//   3. 缓存优先：命中缓存直接返回，不发请求也不吃额度；
+//   4. 超时与重试：20s 超时中断，5xx / 网络错误最多尝试 3 次，退避 1s / 2s / 4s；
+//   5. 403 额度错误：reset 很远抛 RateLimitError（调用方收工），很近就睡到 reset 再试一次。
+// 这里没有评分、没有 HTML 解析、没有任何 GitHub 业务规则；时间与等待都可注入，便于测试。
+
+const TIMEOUT_MS = 20_000;
+const MAX_ATTEMPTS = 3;                 // 一次逻辑请求最多尝试 3 次（含首次）
+const BACKOFF_MS = [1000, 2000, 4000];  // 第 n 次失败后的退避时长
+const RATE_LIMIT_NEAR_MS = 300_000;     // reset 距今不超过 5 分钟：值得等
+const USER_AGENT = 'github-hotspot';
+
+const GITHUB_HEADERS = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28' };
+// 非 GitHub 主机（npm registry / raw / HN 等）不吃 GitHub 的 Accept 头。
+const PLAIN_HEADERS = { accept: '*/*' };
+
+/**
+ * 额度已耗尽且短时间内不会恢复：调用方应当结束本轮采集。
+ */
+export class RateLimitError extends Error {
+  /**
+   * @param {string} message 中文说明
+   * @param {number} resetAt 额度重置时间（UTC 秒，即 x-ratelimit-reset 的原值）
+   */
+  constructor(message, resetAt) {
+    super(message);
+    this.name = 'RateLimitError';
+    this.resetAt = resetAt;
+  }
+}
+
+/** 默认等待实现；测试通过注入 sleep 避免真的等待。 */
+const defaultSleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/**
+ * 创建网络客户端。
+ * @param {object} options
+ * @param {typeof fetch} [options.fetchImpl] 注入的 fetch，默认全局 fetch（测试永不发真实请求）
+ * @param {string} [options.token] GitHub token；有则带 Authorization 头，绝不写日志
+ * @param {number} [options.budget] 吃额度的请求总预算，默认不限
+ * @param {object} [options.cache] 形如 createFileCache 的缓存对象
+ * @param {() => number} [options.now] 返回当前毫秒时间戳，默认 Date.now
+ * @param {(ms: number) => Promise<void>} [options.sleep] 等待实现，默认 setTimeout
+ * @param {object} [options.logger] 形如 console 的日志对象；默认静默（不污染测试输出）
+ * @param {number} [options.timeoutMs] 单次请求超时毫秒数，默认 20000
+ * @returns {{ getJson: Function, fetchText: Function, stats: Function }}
+ */
+export function createClient({
+  fetchImpl = globalThis.fetch,
+  token,
+  budget = Infinity,
+  cache,
+  now = Date.now,
+  sleep = defaultSleep,
+  logger,
+  timeoutMs = TIMEOUT_MS
+} = {}) {
+  let coreCalls = 0;
+  let searchCalls = 0;
+  let cacheHits = 0;
+  let degraded = false;
+
+  // 串行队列：后一个任务挂在前一个任务的结果上，且前一个失败也不阻断队列。
+  let tail = Promise.resolve();
+  const enqueue = (task) => {
+    const result = tail.then(task);
+    tail = result.then(() => {}, () => {});
+    return result;
+  };
+
+  /** 组装请求头：token 只出现在这里，永远不进日志。 */
+  const buildHeaders = (api) => {
+    const base = api === 'none' ? PLAIN_HEADERS : GITHUB_HEADERS;
+    const headers = { ...base, 'user-agent': USER_AGENT };
+    if (token) headers.authorization = `Bearer ${token}`;
+    return headers;
+  };
+
+  /**
+   * 发一次请求，把结果翻译成"继续 / 重试 / 放弃 / 抛错"四态，本身不抛错。
+   * 只有 5xx 与网络错误可重试；4xx（除 403 额度外）是确定性失败，重试没有意义。
+   * @returns {Promise<{type:'ok', value:*}|{type:'ratelimit', resetAt:number}|{type:'error', retryable:boolean, error:Error}>}
+   */
+  const attemptOnce = async (url, api, mode) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetchImpl(url, { headers: buildHeaders(api), signal: controller.signal });
+      if (res.status === 403) {
+        return { type: 'ratelimit', resetAt: Number(res.headers?.get?.('x-ratelimit-reset')) };
+      }
+      if (!res.ok) {
+        return { type: 'error', retryable: res.status >= 500, error: new Error(`HTTP ${res.status}`) };
+      }
+      return { type: 'ok', value: mode === 'text' ? await res.text() : await res.json() };
+    } catch (error) {
+      return { type: 'error', retryable: true, error };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  /**
+   * 一次逻辑请求：缓存 → 预算 → 串行发送 → 重试/403 处理 → 回写缓存。
+   * getJson 与 fetchText 都走这一条路径。
+   * @param {string} url 请求地址
+   * @param {'core'|'search'|'none'} api 额度类别；none 不吃额度（raw / registry / HN）
+   * @param {'json'|'text'} mode 响应解析方式
+   * @param {number} ttlSeconds 缓存存活秒数；非正数表示不缓存
+   * @returns {Promise<*>} 解析后的响应体，或 null（本轮没数据）
+   */
+  const request = async (url, api, mode, ttlSeconds) => {
+    const chargeQuota = api !== 'none';
+    const cacheKey = `${api}:${url}`;
+    const cacheable = Boolean(cache) && ttlSeconds > 0;
+
+    if (cacheable) {
+      const cached = cache.get(cacheKey);
+      if (cached !== undefined) {
+        cacheHits++;
+        return cached;
+      }
+    }
+
+    if (chargeQuota && coreCalls + searchCalls >= budget) {
+      // 预算是硬上限：发出去只会浪费额度，所以连请求都不发。
+      degraded = true;
+      logger?.warn?.(`额度预算已用尽（${coreCalls + searchCalls}/${budget}），跳过请求：${url}`);
+      return null;
+    }
+    if (chargeQuota) {
+      if (api === 'search') searchCalls++; else coreCalls++;
+    }
+
+    let attempts = 0;
+    let waitedForReset = false;
+    for (;;) {
+      const outcome = await attemptOnce(url, api, mode);
+
+      if (outcome.type === 'ok') {
+        if (cacheable) cache.set(cacheKey, outcome.value, ttlSeconds);
+        return outcome.value;
+      }
+
+      if (outcome.type === 'ratelimit') {
+        const resetAt = Number.isFinite(outcome.resetAt) ? outcome.resetAt : Math.floor(now() / 1000);
+        const waitMs = resetAt * 1000 - now();
+        // reset 很近就等它过去再试一次（这一等不算重试次数）；否则本轮到此为止。
+        if (!waitedForReset && waitMs <= RATE_LIMIT_NEAR_MS) {
+          waitedForReset = true;
+          logger?.warn?.(`额度已用尽，休眠 ${Math.max(0, waitMs)}ms 后重试一次：${url}`);
+          await sleep(Math.max(0, waitMs));
+          continue;
+        }
+        degraded = true;
+        throw new RateLimitError(
+          `GitHub 额度已用尽，需等到 ${new Date(resetAt * 1000).toISOString()}（resetAt=${resetAt}）`,
+          resetAt
+        );
+      }
+
+      attempts++;
+      if (!outcome.retryable || attempts >= MAX_ATTEMPTS) {
+        degraded = true;
+        logger?.warn?.(`请求失败，本轮放弃：${url}（${outcome.error?.message ?? '未知错误'}）`);
+        return null;
+      }
+      logger?.warn?.(`请求失败（第 ${attempts} 次），${BACKOFF_MS[attempts - 1]}ms 后重试：${url}`);
+      await sleep(BACKOFF_MS[attempts - 1]);
+    }
+  };
+
+  /** 额度类别的归一化：只认 search / none，其它一律按 core 处理。 */
+  const normalizeApi = (api) => (api === 'search' || api === 'none' ? api : 'core');
+
+  return {
+    /**
+     * 取 JSON 响应。
+     * @param {string} url 请求地址
+     * @param {{ api?: string, ttlSeconds?: number }} [options] 额度类别与缓存存活秒数
+     * @returns {Promise<*>} 解析后的 JSON；本轮没数据时为 null
+     */
+    getJson(url, { api = 'core', ttlSeconds = 0 } = {}) {
+      return enqueue(() => request(url, normalizeApi(api), 'json', ttlSeconds));
+    },
+
+    /**
+     * 取纯文本响应（HTML、raw 文件等）。
+     * 与 getJson 共用同一条串行队列与预算机制，但按 api:'none' 处理：
+     * github.com 的 HTML 页与 raw.githubusercontent.com 都不消耗 GitHub API 额度。
+     * @param {string} url 请求地址
+     * @returns {Promise<string|null>} 响应文本；本轮没数据时为 null
+     */
+    fetchText(url) {
+      return enqueue(() => request(url, 'none', 'text', 0));
+    },
+
+    /**
+     * 本轮运行统计。
+     * @returns {{ coreCalls: number, searchCalls: number, cacheHits: number, degraded: boolean }}
+     */
+    stats() {
+      return { coreCalls, searchCalls, cacheHits, degraded };
+    }
+  };
+}

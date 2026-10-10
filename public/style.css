@@ -1,0 +1,141 @@
+/* GitHub 好玩榜 —— 页面样式（纯 CSS，没有框架、没有外链字体、没有构建步骤）。
+   目标用户是"没打开过终端的人"：字号偏大、行距宽松、颜色对比明确，
+   桌面上是单列宽卡片，手机上自动收窄（spec §12：桌面优先，但手机上也要看得下去）。 */
+
+:root {
+  --ink: #1b1f24;
+  --ink-soft: #57606a;
+  --line: #d8dee4;
+  --bg: #f6f8fa;
+  --card: #ffffff;
+  --brand: #2f6feb;
+  --green: #1a7f37;
+  --green-bg: #dafbe1;
+  --yellow: #9a6700;
+  --yellow-bg: #fff8c5;
+  --red: #b42318;
+  --red-bg: #ffebe9;
+  --radius: 12px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 16px 48px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.7;
+  font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, -apple-system, sans-serif;
+}
+
+.site-head { max-width: 900px; margin: 0 auto; padding: 28px 0 8px; }
+.site-head h1 { margin: 0 0 6px; font-size: 30px; }
+.tagline { margin: 0; color: var(--ink-soft); }
+
+.tabs { max-width: 900px; margin: 20px auto 0; display: flex; flex-wrap: wrap; gap: 10px; }
+.tab {
+  flex: 1 1 220px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 18px; font-weight: 600; color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+.tab:hover { border-color: var(--brand); }
+.tab[aria-selected="true"] { border-color: var(--brand); background: #eef3ff; }
+.tab-note { font-size: 14px; font-weight: 400; color: var(--ink-soft); }
+
+.filters {
+  max-width: 900px; margin: 16px auto 0;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.filter-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.filter-check input { width: 18px; height: 18px; }
+.filter-select { display: flex; align-items: center; gap: 8px; }
+.filter-select select { font-size: 16px; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: #fff; }
+.filter-count { margin-left: auto; color: var(--ink-soft); font-size: 15px; }
+
+main { max-width: 900px; margin: 0 auto; }
+.board-head { margin: 22px 0 6px; font-size: 22px; }
+.board-sub { margin: 0 0 14px; color: var(--ink-soft); }
+
+.loading { margin: 28px 0; color: var(--ink-soft); }
+
+.card {
+  display: flex; gap: 14px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.card .rank { font-size: 26px; font-weight: 700; color: var(--ink-soft); min-width: 42px; }
+.card-body { flex: 1; min-width: 0; }
+.card-title { margin: 0 0 4px; font-size: 21px; }
+.card-desc { margin: 0 0 10px; }
+
+.badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 14px; border: 1px solid transparent; }
+.badge-green { background: var(--green-bg); color: var(--green); border-color: #aceebb; }
+.badge-yellow { background: var(--yellow-bg); color: var(--yellow); border-color: #f5e08a; }
+.badge-red { background: var(--red-bg); color: var(--red); border-color: #ffc9c4; }
+.badge-cn { background: #eef3ff; color: var(--brand); border-color: #b6cffb; }
+.badge-cn-alt { background: #f3f0ff; color: #5a3fc0; border-color: #d9cffb; }
+
+.meta-line { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--ink-soft); font-size: 15px; }
+.growth { font-weight: 600; color: var(--ink); }
+.growth-estimated { color: var(--yellow); }
+.growth-unknown { font-weight: 400; font-style: normal; }
+.fact-label { color: var(--ink-soft); }
+.fact-label::after { content: "："; }
+
+.score-summary { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 15px; }
+.score-total { font-weight: 600; }
+.axis-name::after { content: " "; }
+
+.reasons { margin: 10px 0 0; padding-left: 20px; color: var(--ink-soft); font-size: 15px; }
+.reasons li { margin-bottom: 2px; }
+
+.card-actions { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 15px; }
+.card-actions a { color: var(--brand); }
+.hint { color: var(--ink-soft); }
+.growth-3d { font-weight: 400; }
+
+.score-bars { margin: 10px 0; }
+.bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 15px; }
+.bar-label { width: 76px; color: var(--ink-soft); }
+.bar-track { flex: 1; height: 10px; background: #eaeef2; border-radius: 999px; overflow: hidden; }
+.bar-fill { display: block; height: 100%; background: var(--brand); }
+.bar-value { width: 48px; text-align: right; }
+
+.notice { padding: 14px 18px; margin: 18px 0; border-radius: var(--radius); border: 1px solid; }
+.notice-degraded { background: var(--yellow-bg); border-color: #f5e08a; }
+.notice-empty { background: #eef3ff; border-color: #b6cffb; }
+.notice-notes { margin: 8px 0 0; padding-left: 20px; font-size: 15px; color: var(--ink-soft); }
+.empty { margin: 18px 0; padding: 14px 18px; background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius); color: var(--ink-soft); }
+
+.date-picker { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.date-picker select { font-size: 15px; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: #fff; }
+
+.site-foot { max-width: 900px; margin: 32px auto 0; color: var(--ink-soft); font-size: 15px; }
+.site-foot a { color: var(--brand); }
+.foot-line { margin: 4px 0; }
+
+code { background: #eaeef2; padding: 1px 6px; border-radius: 6px; font-size: 15px; }
+
+@media (max-width: 560px) {
+  body { font-size: 16px; padding: 0 12px 40px; }
+  .card { flex-direction: column; gap: 4px; }
+  .card .rank { font-size: 20px; }
+  .filter-count { margin-left: 0; }
+}

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHub 好玩榜 · 三个榜，告诉你好玩的项目怎么装</title>
+<!-- 零依赖、零构建：没有框架、没有 CDN、没有外链字体，联网与否都能打开（spec §5.1）。 -->
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-head">
+  <h1>GitHub 好玩榜</h1>
+  <p class="tagline">每天从 GitHub 上挑出好玩的项目，用大白话告诉你是干什么的、你到底装不装得上。</p>
+</header>
+
+<nav class="tabs" id="tabs" role="tablist" aria-label="榜单切换">
+  <!-- 三个榜签是页面自带的：JS 还没跑起来（或数据没加载完）时也看得见，用户不会面对一片空白。 -->
+  <button class="tab" role="tab" data-board="weekly" aria-selected="true">🔥 本周飙升<span class="tab-note">最近大家在玩什么</span></button>
+  <button class="tab" role="tab" data-board="newbie" aria-selected="false">🌟 新手能玩<span class="tab-note">哪些我真能装上</span></button>
+  <button class="tab" role="tab" data-board="classic" aria-selected="false">🏆 经典必玩<span class="tab-note">GitHub 上早就有的好东西</span></button>
+</nav>
+
+<section class="filters" id="filters" aria-label="筛选条">
+  <label class="filter-check"><input type="checkbox" id="filter-easy"> 🟢 一键就能玩</label>
+  <label class="filter-check"><input type="checkbox" id="filter-cn"> 🈶 有中文说明</label>
+  <label class="filter-select">语言
+    <select id="filter-language">
+      <option value="">全部语言</option>
+    </select>
+  </label>
+  <span class="filter-count" id="filter-count"></span>
+</section>
+
+<main id="board">
+  <!-- 数据到位之前先说明"在做什么"，而不是留一块空白让人以为网站坏了。 -->
+  <p class="loading">正在读取榜单数据……</p>
+</main>
+
+<footer class="site-foot">
+  <p class="foot-line">数据来自 GitHub 的公开信息，每天采集一次；收藏、安装方式这些数字都标了它是怎么来的。</p>
+  <p class="foot-line">带「约」和「估算」的是我们推算出来的，带「实测」的是我们前后两次记录相减量出来的，带「GitHub 官方数据」的是官方页面自己写的数字。</p>
+  <p class="foot-line"><a href="about.html">关于评分口径</a> · 想装东西但没开过命令行？先看<a href="prepare.html">新手准备页</a>。</p>
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

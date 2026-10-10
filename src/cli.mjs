@@ -8,12 +8,14 @@
 // 分工：本文件只负责"装配"——读环境变量、建网络客户端与缓存、选真实或离线管线，
 // 然后交给 src/collect.mjs 的 runCollect 去编排。**编排逻辑一行都不在这里**，
 // 否则离线测试跑的就成了另一条路径。
+// serve 分支同理：它只负责起一个静态服务器并把地址打出来，不读数据、不改数据（spec §5.1）。
 
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { RateLimitError, createClient } from './net/client.mjs';
 import { createFileCache } from './net/file-cache.mjs';
 import { runCollect } from './collect.mjs';
 import { createOfflineSources, createRealSources } from './sources/pipeline.mjs';
+import { createStaticServer } from './http/static-server.mjs';
 
 const USAGE = `用法：node src/cli.mjs <命令>
 
@@ -37,6 +39,8 @@ const ROUND_BUDGET = 45;
 const DEFAULT_DATA_DIR = 'public/data';
 const DEFAULT_DAILY_DIR = 'daily';
 const DEFAULT_CACHE_PATH = 'data/cache.json';
+// 本地预览的默认端口。选它是因为不常被别的程序占用；被占了就用 PORT 换一个（见 serve）。
+const DEFAULT_PORT = 8765;
 
 /**
  * 命令行主函数。
@@ -52,8 +56,7 @@ export async function main(argv, options = {}) {
     case 'collect':
       return collect(argv.slice(1), env, logger);
     case 'serve':
-      // 占位：静态站点服务由 Task 16 实现。
-      return 0;
+      return serve(argv.slice(1), env, logger);
     case 'export':
       // 占位：导出逻辑由后续任务实现。
       return 0;
@@ -62,6 +65,53 @@ export async function main(argv, options = {}) {
       process.stderr.write(USAGE);
       return 2;
   }
+}
+
+/**
+ * serve 分支：起一个只提供 public/ 的静态服务器，把地址打出来，然后一直跑到 Ctrl+C。
+ *
+ * 它**不是**一个服务端应用：没有接口、没有模板、不读也不改任何数据文件
+ * （spec §5.1、§5.3）。页面需要的 JSON 由浏览器自己 fetch，服务器只负责把文件原样送出去 ——
+ * 所以整个 public/ 目录能原样部署到任何静态托管上，本地看到的和线上看到的走的是同一条路。
+ * @param {string[]} args 子命令之后的参数（目前只用得到 PORT 环境变量）
+ * @param {object} env 环境变量
+ * @param {object} logger 日志对象
+ * @returns {Promise<number>} 退出码：0 正常关掉，1 端口被占之类起不来
+ */
+async function serve(args, env, logger) {
+  const raw = env.PORT ?? '';
+  const parsed = typeof raw === 'string' && raw.trim() !== '' ? Number.parseInt(raw, 10) : DEFAULT_PORT;
+  const port = Number.isInteger(parsed) && parsed >= 0 && parsed <= 65535 ? parsed : DEFAULT_PORT;
+  // 用 import.meta.url 定位 public/，而不是 cwd：从别的目录敲 `node 路径/src/cli.mjs serve` 时
+  // cwd 是那个目录，用 cwd 会服务错文件夹（甚至服务不了任何东西）。
+  // URL.pathname 是百分号编码的（本项目的目录名里有空格和中文），必须用 fileURLToPath 转回真实路径。
+  const root = fileURLToPath(new URL('../public/', import.meta.url));
+  const server = createStaticServer({ root });
+
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, '127.0.0.1', resolve);
+    });
+  } catch (error) {
+    logger.error(`起不来本地预览服务：${error?.message ?? error}。换个端口再试：PORT=8766 npm start`);
+    return 1;
+  }
+
+  logger.log(`本地预览已启动：http://127.0.0.1:${server.address().port}/`);
+  logger.log('按 Ctrl+C 停掉它。（这个服务只提供 public/ 目录里的文件，没有任何接口。）');
+
+  // 等它被关掉为止：进程活着，用户才能一直刷页面。
+  await new Promise((resolve) => {
+    const stop = () => {
+      server.close(() => resolve());
+      // 已经建立的连接（浏览器开着页面）不会自己断，close 会一直等，所以主动断掉它们。
+      server.closeAllConnections();
+    };
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
+  });
+  return 0;
 }
 
 /**

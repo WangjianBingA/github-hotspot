@@ -43,7 +43,9 @@ export function scoreHot({ starsGained7d }) {
  * 比值类子项按"达到满分条件即满分"线性折算并封顶；缺字段或非法数值一律记 0，不抛错。
  * 刻意不算"issue 处理率"：GitHub 根本不返回 closed_issues，算了也只会得到一个假结论。
  * @param {{ forks?: number, stars?: number,
- *   pushedAt?: string, license?: string|{spdx_id?: string}|null, hasRelease90d?: boolean }} repo 候选项目
+ *   pushedAt?: string, license?: string|{spdx_id?: string}|null,
+ *   hasRelease90d?: boolean|null }} repo 候选项目；hasRelease90d 是三态：true/false/null（null=没问到，
+ *   按中性半分计，见下方 R40 说明）
  * @param {{ growing?: boolean|null }} [extra] 需要历史数据才能算的部分：growing 为相邻两期收藏是否增长，
  *   null/undefined 代表数据不足，给中性半分（4 / 2 = 2）而不是惩罚新项目
  * @param {Date} [now] 显式传入"现在"，用于算 pushedAt 距今天数；默认 new Date()
@@ -71,10 +73,16 @@ export function scoreReputation(repo, extra = {}, now = new Date()) {
   const noHistory = extra.growing === null || extra.growing === undefined;
   const growth = noHistory ? DETAIL_WEIGHTS.growth / 2 : extra.growing ? DETAIL_WEIGHTS.growth : 0;
 
+  // releases.mjs 产出的是三态（R40）：true 有近 90 天的发版、false 确认没有、null 没问到。
+  // "没问到"给中性半分（DETAIL_WEIGHTS.release90d / 2 = 3），与上面 growth 的口径一致：
+  // 记 0 会让界面显示"近 90 天有发版：0 分"，那是一句我们没有证据的断言；只有明确 false 才记 0。
+  // 缺字段（undefined）同样按"没问到"处理：调用方没写这个字段就说明它没有证据，不能当作"确认没有"。
+  const releaseUnknown = repo.hasRelease90d !== true && repo.hasRelease90d !== false;
+
   const parts = {
     forkRatio: DETAIL_WEIGHTS.forkRatio * Math.min(1, forkRatio / FORK_RATIO_FULL),
     pushRecency,
-    release90d: repo.hasRelease90d ? DETAIL_WEIGHTS.release90d : 0,
+    release90d: releaseUnknown ? DETAIL_WEIGHTS.release90d / 2 : repo.hasRelease90d ? DETAIL_WEIGHTS.release90d : 0,
     license,
     growth,
   };

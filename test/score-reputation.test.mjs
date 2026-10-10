@@ -35,6 +35,15 @@ test('新项目没有历史增长数据时不惩罚，给中性分', () => {
   assert.equal(r.parts.growth, 2);         // 4 分的一半
 });
 
+// R40：release90d 的三种状态必须分开记分——"问到没有"才是 0，"没问到"给中性半分。
+// 把未知记 0 会让界面显示"近 90 天有发版：0 分"，那是一句我们没有证据的话。
+test('发版信息未知时不惩罚，给中性半分；确认没发版才记 0（R40）', () => {
+  const unknown = scoreReputation({ ...base, hasRelease90d: null }, { growing: true });
+  assert.equal(unknown.parts.release90d, DETAIL_WEIGHTS.release90d / 2);   // 6 / 2 = 3
+  const none = scoreReputation({ ...base, hasRelease90d: false }, { growing: true });
+  assert.equal(none.parts.release90d, 0);
+});
+
 test('archived 仓库被门槛挡下并给出原因', () => {
   const g = passesGates({ ...base, archived: true }, { kind:'npmBinWin', verified:true });
   assert.equal(g.ok, false);

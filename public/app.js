@@ -17,12 +17,9 @@
 
 import {
   buildBoardView,
-  degradedNotice,
   escapeAttr,
   escapeHtml,
   itemCard,
-  missingDateNotice,
-  noDataNotice,
 } from './render.mjs';
 
 // 数据文件放在页面旁边（同源同目录），所以用相对地址就够了。
@@ -31,16 +28,17 @@ const DATA_BASE = 'data/';
 /** 语言筛选里代表"没有标注语言"的那一项（真实语言名不会长这样）。 */
 const UNKNOWN_LANGUAGE = '__unknown__';
 
-/** 三个榜单的中文说明（榜签上的短句在 index.html 里，这里给列表上方那句长一点的）。 */
-const BOARD_NOTES = new Map([
-  ['weekly', '过线之后按热度、口碑、新手友好三项算出来的总分排序：最近大家都在玩什么。'],
-  ['newbie', '同一批项目，换成按"新手友好"排序：哪些你今晚真的能装上。'],
-  ['classic', '按总收藏人数排的老牌好东西，不参与评分——给刚来的人补课用的。这一榜不是"最热"，是"最值得先看"。'],
-]);
+/**
+ * 认得出的榜单名（用来校验地址栏的 # 与榜签）。
+ * 注意这里**只有 id，没有任何文案**：榜单叫什么、列表上方那句话说什么，全在 render.mjs 里
+ * （R102：app.js 不做显示决策，也不持有用户可见的文字）。
+ */
+const BOARD_IDS = new Set(['weekly', 'newbie', 'classic']);
 
 /**
- * 页面状态。它只存**原始事实**（哪一天、哪个榜、勾了什么、数据是什么），
+ * 页面状态。它只存**原始事实**（哪一天、哪个榜、勾了什么、数据是什么、是不是还在读），
  * 不存"该显示哪些卡片"——那由 buildBoardView 每次现算，避免状态与界面各说各话。
+ * view 是上一轮算出来的结果，只用于 renderControls 贴那句筛选说明，不参与任何判断。
  */
 const state = {
   dates: [],
@@ -48,6 +46,8 @@ const state = {
   boardId: 'weekly',
   filters: { easy: false, chinese: false, language: '' },
   daily: null,
+  dailyLoading: false,
+  view: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -65,7 +65,7 @@ function dateFromUrl() {
 /** 从地址栏的 # 里取榜单名；认不出来的当没写。 */
 function boardFromUrl() {
   const id = String(window.location.hash ?? '').replace(/^#/, '');
-  return BOARD_NOTES.has(id) ? id : '';
+  return BOARD_IDS.has(id) ? id : '';
 }
 
 /** 取 JSON；任何失败（404、坏 JSON、断网）都返回 null，由调用方给出人话提示。 */
@@ -106,9 +106,9 @@ function currentBoardTitle(boardId) {
 }
 
 /**
- * 把"这一屏该显示什么"算出来（R93）。
- * 通知也一起算：degraded / 空榜 / 读不出来 都在同一次计算里，
- * 所以任何一次重渲染都会重新带上它们（R94）。
+ * 把"这一屏该显示什么"算出来（R93 / R102）。
+ * 这里是**唯一**把状态交给渲染层的地方：通知、语言清单、提示语全在 buildBoardView 里决定，
+ * 本文件不做任何"根据数据挑一条文案"的判断（R102）。
  * @returns {object} buildBoardView 的结果
  */
 function computeView() {
@@ -120,17 +120,20 @@ function computeView() {
     daily: currentDaily(),
     date: state.date,
     dates: state.dates,
+    loading: state.dailyLoading,
   });
 }
 
-/** 语言下拉：把这一榜当期真实出现过的语言填进去（R95：这个函数必须真的被调用）。 */
+/**
+ * 语言下拉：选项来自 view，是否有效也由 view 判定（R95 / R103）。
+ * 曾经的缺陷：这里把"没有标注语言"当成永远有效，于是从有未标注语言的那天切到没有的另一天时，
+ * 选项没了、`select.value` 却停在那个值上——控件显示空白、筛选仍在生效，用户看不到任何生效中的筛选。
+ * 现在无效的选择一律回退成"全部语言"（state 与 DOM 同时回退），并在下面断言里钉住。
+ */
 function renderLanguageOptions(view) {
   const select = el('filter-language');
   if (select === null) return;
-  const current = state.filters.language;
-  const known = current === UNKNOWN_LANGUAGE || view.languages.includes(current);
-  // 选中的语言在这一榜里不存在了就清掉状态，否则列表会空着而用户不知道为什么。
-  if (!known) state.filters.language = '';
+  if (view.languageSelectionValid !== true) state.filters.language = '';
 
   const options = ['<option value="">全部语言</option>'];
   for (const language of view.languages) {
@@ -194,11 +197,13 @@ function renderControls() {
   // R96：经典榜按总收藏排序、不参与评分，所以"🟢 一键就能玩"这个按难度筛的开关对它没有意义。
   // 复选框**保持可用**（禁用它会让用户勾着却取消不掉），只是经典榜不拿它过滤
   // （真正的分支在 buildBoardView / boardAcceptsDifficultyFilter 里，做法与说法一致）。
+  // R102：这句解释的**内容**由纯函数给（view.hints 里 key 为 difficulty-filter 的那条），
+  // 本文件不再自己写文案、也不做"哪个榜该说什么"的判断；这里是把它贴到 DOM 上而已。
+  const hint = (state.view?.hints ?? []).find((h) => h.key === 'difficulty-filter');
   const label = easy === null ? null : easy.closest('label');
   if (label !== null) {
-    label.title = state.boardId === 'classic'
-      ? '经典榜按总收藏人数排序、不参与评分，所以这个筛选对它不生效——切回上面两个榜就生效了。'
-      : '';
+    // 挂在 title 上，同时也是可被测试断言的载体（不靠"悬停才会看到"的 Tooltip）。
+    label.title = hint === undefined ? '' : '这条筛选对当前这个榜不生效。';
   }
 }
 
@@ -206,22 +211,14 @@ function renderControls() {
  * 渲染整块榜单区域。**通知与卡片在同一次输出里**（R94）：
  * 以前把 degraded 提示单独 insertAdjacentHTML 进去，结果任何一次重渲染（切榜单、改筛选、换日期）
  * 都会用 innerHTML 把它整个盖掉。现在它由 computeView 每次现算，跟着卡片一起写出去。
+ *
+ * R102：这里没有任何"根据数据挑一条文案"的分支——通知列表与说明语都来自 view。
  */
 function renderBoard() {
   const container = el('board');
   if (container === null) return;
   const view = computeView();
-
-  // 这一天在日期清单里，但文件没读到：单独给一句提示，而不是空白页（R101）。
-  const notices = [...view.notices];
-  if (currentDaily() === null && state.dates.includes(state.date)) {
-    notices.push({ key: 'date-missing', html: missingDateNotice(state.date, state.dates.length) });
-  }
-
-  const note = BOARD_NOTES.get(state.boardId) ?? '';
-  const hint = '<p class="board-sub">点开卡片目前只会看到一句提示：详细说明与三步安装说明还在做（下一个版本上线）。'
-    + '如果你从没打开过命令行，先看<a href="prepare.html">新手准备页</a>，从头照着做一遍就行。'
-    + '另外，有中文说明的项目会带「有中文说明」徽章；只有外文文档的会如实标成「有本地化文档（非中文）」。</p>';
+  state.view = view;
 
   const cards = view.items.map((item) => {
     // 项目全名要进 HTML 属性，所以先把引号之类转义掉：数据文件是外部输入，不能假设它一定干净。
@@ -231,15 +228,16 @@ function renderBoard() {
       + '</article>';
   }).join('');
 
-  // 榜单名来自数据文件（外部输入），同样要转义。
+  // 榜单名与列表上下的说明全部来自 view。榜单名可能来自数据文件（外部输入）所以转义；
+  // 说明文案是内部文案，本身可以带一个链接标签（新手准备页），所以按 HTML 片段贴上去。
   container.innerHTML = `<h2 class="board-head">${escapeHtml(view.boardTitle)}</h2>`
-    + `<p class="board-sub">${note}</p>`
-    + hint
-    + notices.map((notice) => notice.html).join('')
+    + view.hints.filter((hint) => hint.html !== '').map((hint) => `<p class="board-sub">${hint.html}</p>`).join('')
+    + view.notices.map((notice) => notice.html).join('')
     + cards;
 
   renderStats(view);
   renderLanguageOptions(view);
+  renderControls();
   bindCardHints(container);
 }
 
@@ -265,27 +263,31 @@ function renderMessage(html) {
   if (stats !== null) stats.textContent = '';
 }
 
-/** 读某一天的榜单数据；成功或失败都交给 renderBoard 决定说哪句话。 */
+/** 读某一天的榜单数据；成功或失败都交给 renderBoard 决定说哪句话（R101/R104）。 */
 async function loadDaily() {
+  // 读的过程中给"正在读取"（由视图函数决定），读完再交给"读不出来"那条提示——
+  // 两者是不同的事，不能混成一句（R104）。
+  state.dailyLoading = true;
+  renderBoard();
   const payload = await getJson(`${DATA_BASE}${state.date}.json`);
   // 形状不对的也当读不到：让它走"读不出来"的提示，而不是抛错停在"正在读取…"（R101）。
   state.daily = payload !== null && typeof payload === 'object' && Array.isArray(payload.boards) ? payload : null;
-  renderControls();
+  state.dailyLoading = false;
   renderBoard();
   renderDatePicker();
 }
 
-/** 启动：读日期清单 → 定下要看的日期 → 渲染。任何意外都要给人话提示，不能停在转圈上。 */
+/**
+ * 启动：读日期清单 → 定下要看的日期 → 渲染。
+ * 日期清单为空**不在这里挑提示**（R102）：让 loadDaily 走同一条渲染路径，
+ * 由 buildBoardView 在 `dates` 为空时说"还没有任何榜单数据"。
+ */
 async function boot() {
   const index = await getJson(`${DATA_BASE}index.json`);
   const dates = Array.isArray(index?.dates) ? index.dates.filter((d) => typeof d === 'string' && d !== '') : [];
-  if (dates.length === 0) {
-    renderMessage(noDataNotice());
-    return;
-  }
   state.dates = dates;
   const wanted = dateFromUrl();
-  state.date = dates.includes(wanted) ? wanted : dates[0];
+  state.date = dates.includes(wanted) ? wanted : (dates[0] ?? '');
   state.boardId = boardFromUrl() || 'weekly';
   await loadDaily();
 }
@@ -295,10 +297,9 @@ async function boot() {
 for (const tab of document.querySelectorAll('.tab')) {
   tab.addEventListener('click', () => {
     const id = tab.dataset.board;
-    if (!BOARD_NOTES.has(id) || id === state.boardId) return;
+    if (!BOARD_IDS.has(id) || id === state.boardId) return;
     state.boardId = id;
     window.location.hash = id;
-    renderControls();
     renderBoard();
   });
 }
@@ -321,11 +322,11 @@ window.addEventListener('hashchange', () => {
   const id = boardFromUrl();
   if (id === '' || id === state.boardId) return;
   state.boardId = id;
-  renderControls();
   renderBoard();
 });
 
 // 启动失败（例如数据文件把某个函数喂崩了）也要有话说，而不是永远停在"正在读取榜单数据……"。
+// 这是**兜底**，不是显示决策：正常路径上"该说什么"全部由 buildBoardView 决定。
 try {
   await boot();
 } catch (error) {

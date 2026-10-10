@@ -40,6 +40,16 @@ const BOARD_TITLES = new Map([
   ['classic', '经典必玩'],
 ]);
 
+/**
+ * 每个榜单列表上方那句"这个榜是什么"的说明（R102：这也是显示文案，住在纯函数层）。
+ * 说清排序依据，并点明经典榜"不是最热、是最值得先看"——它的排序依据与其他两榜不同。
+ */
+const BOARD_NOTES = new Map([
+  ['weekly', '过线之后按热度、口碑、新手友好三项算出来的总分排序：最近大家都在玩什么。'],
+  ['newbie', '同一批项目，换成按"新手友好"排序：哪些你今晚真的能装上。'],
+  ['classic', '按总收藏人数排的老牌好东西，不参与评分——给刚来的人补课用的。这一榜不是"最热"，是"最值得先看"。'],
+]);
+
 /** 难度徽章文案（spec §4.2），也是筛选条上那句话的来源。 */
 const GRADE_BADGES = new Map([
   ['green', '🟢 一键就能玩'],
@@ -367,11 +377,27 @@ export function itemCard({ boardId, item }) {
     + itemMeta({ boardId, item })
     + boardScore(boardId, item)
     + reasonHtml
-    + `<div class="card-actions">${link}<span class="hint">想看怎么装？点开这张卡片。</span></div>`
+    // R105：这里**不能**承诺"点开就能看怎么装"。抽屉要到 Task 17 才有，现在点开只会看到
+    // 一句"下个版本"的提示，所以卡片上只说当下成立的话。整节说明在 buildBoardView 的 hints 里。
+    + `<div class="card-actions">${link}<span class="hint">详情入口（还在做）。</span></div>`
     + '</div>';
 }
 
-// ---------- 状态：该显示哪些条目、该给哪些提示（R93） ----------
+/**
+ * 榜单列表上方那段说明（R102：文案选择属于显示决策，住在纯函数层）。
+ *
+ * R97 / R105：**不能**承诺"点开卡片就能看到详细介绍 / 三步安装说明"——那两样要 Task 17 才有，
+ * 现在点开只会看到一句"下个版本"的提示。所以这里如实说"还在做"，并把新手准备页的链接给出来。
+ * 返回的是**纯文本**（可以有链接这种行内标签），外层由调用方包成段落。
+ * @returns {string} HTML 片段（纯文本 + 一个链接）
+ */
+export function cardDetailHint() {
+  return '点开卡片目前只会看到一句提示：详细说明与三步安装说明还在做（下一个版本上线）。'
+    + '想看项目本身，点卡片里的「打开项目主页」；如果你从没打开过命令行，'
+    + '先看<a href="prepare.html">新手准备页</a>，从头照着做一遍就行。';
+}
+
+// ---------- 状态：该显示哪些条目、该给哪些提示（R93 / R102） ----------
 
 /**
  * 这个榜收不收"按难度筛"（R25 / R96）。
@@ -386,22 +412,49 @@ export function boardAcceptsDifficultyFilter(boardId) {
 }
 
 /**
- * 算出"这一屏到底该显示什么"（R93）。所有与 DOM 无关的状态判断都在这里：
- * 通知列表、通过筛选的条目、统计文案、这一期出现过的语言。
+ * 榜单列表上方那句说明（R102：文案选择属于显示决策，住在纯函数层）。
+ * 认不出的榜给空串（那时 buildBoardView 的 boardTitle 已经是"这个榜"，不必再解释）。
+ * @param {string} boardId 榜单 id
+ * @returns {string} 一句中文；认不出的榜返回空串
+ */
+export function boardNote(boardId) {
+  return BOARD_NOTES.get(boardId) ?? '';
+}
+
+/**
+ * 难度筛选在某个榜上不适用时，给用户的那句说明（R102：文案选择也是显示决策，住在纯函数层）。
+ * 不适用时返回一句解释，适用时返回空串（界面就不用挂提示）。
+ * @param {string} boardId 榜单 id
+ * @returns {string}
+ */
+export function difficultyFilterHint(boardId) {
+  if (boardAcceptsDifficultyFilter(boardId)) return '';
+  return '经典榜按总收藏人数排序、不参与评分，所以「🟢 一键就能玩」这个筛选对它不生效——切回上面两个榜就生效了。';
+}
+
+/**
+ * 这一期该显示哪些条目、该给哪些提示（R93 / R102）。所有与 DOM 无关的显示决策都在这里：
+ * 通知列表、通过筛选的条目、统计文案、语言清单、卡片上下的提示语。
  *
  * 通知**每次调用都重新算一遍**（R94）：degraded 不是"进入页面时插一次"，
  * 所以切榜单 / 改筛选 / 换日期之后它照样在；换到数据完整的那一天它就消失。
  *
+ * 通知之间**不重复、不互相矛盾**（R104），优先级：数据不完整 → 这一天读不出来 →
+ * 这一期没有条目 → 被筛没了。也就是说 items 为空时只会出现其中一条。
+ *
  * @param {{
- *   degraded?: boolean, notes?: string[], boardId?: string, boardTitle?: string,
- *   items?: object[], filters?: { easy?: boolean, chinese?: boolean, language?: string },
- *   daily?: object|null, date?: string,
+ *   boardId?: string, boardTitle?: string, items?: object[],
+ *   filters?: { easy?: boolean, chinese?: boolean, language?: string },
+ *   daily?: object|null,   // 这一天的日报对象；null 表示没读到（尚未加载完也算）
+ *   date?: string,         // 想看的日期（用来把"缺哪一天"说清楚）
+ *   dates?: string[],      // 有数据的日期清单（长度决定"换一天"这句建议是否成立）
+ *   loading?: boolean,     // 正在读数据（此时给"正在读取"，而不是"读不出来"）
  * }} input
  * @returns {{
- *   items: object[],
- *   notices: { key: string, html: string }[],
+ *   items: object[], notices: { key: string, html: string }[],
  *   totalCount: number, visibleCount: number, countText: string,
  *   boardTitle: string, languages: string[], unknownLanguageCount: number,
+ *   languageSelectionValid: boolean, hints: { key: string, html: string }[],
  * }}
  */
 export function buildBoardView(input = {}) {
@@ -409,6 +462,8 @@ export function buildBoardView(input = {}) {
   const boardId = typeof source.boardId === 'string' ? source.boardId : '';
   const daily = source.daily && typeof source.daily === 'object' ? source.daily : null;
   const items = asArray(source.items);
+  const dates = asArray(source.dates).filter((d) => typeof d === 'string' && d !== '');
+  const date = typeof source.date === 'string' ? source.date : '';
   const filters = source.filters && typeof source.filters === 'object' ? source.filters : {};
   const title = typeof source.boardTitle === 'string' && source.boardTitle !== ''
     ? source.boardTitle
@@ -425,13 +480,33 @@ export function buildBoardView(input = {}) {
     return true;
   });
 
+  // 语言清单（R95）：来自这一榜当期的真实数据，稳定排序；认不出语言的单独计数。
+  const languages = [...new Set(items
+    .map((item) => item?.language)
+    .filter((item) => hasLanguage({ language: item })))]
+    .sort();
+  const unknownLanguageCount = items.filter((item) => !hasLanguage(item)).length;
+  // R103：选中的语言在当前这一期必须真的存在（"没有标注语言"那一项也一样）。
+  // 这条判断从 DOM 层搬到这里，就是为了让"跨期切换后筛选状态与选项是否一致"可以被断言；
+  // app.js 据此把无效的选择回退成"全部语言"，不再出现"空列表 + 空白下拉"。
+  const languageSelectionValid = language === ''
+    || (language === UNKNOWN_LANGUAGE ? unknownLanguageCount > 0 : languages.includes(language));
+
   const notices = [];
-  // 顺序即重要性：数据不完整排最前（它影响整页读数），然后是"这块为什么是空的"。
+  // 顺序即重要性：数据不完整排最前（它影响整页读数），然后才是"这块为什么是空的"。
   if (daily?.degraded === true) {
     notices.push({ key: 'degraded', html: degradedNotice(true, daily.notes) });
   }
   if (daily === null) {
-    notices.push({ key: 'no-data', html: noDataNotice() });
+    // R104：这一天读不出来时只说这一句——绝不再叠一条"本期没有条目"（同一次事件、两条提示，
+    // 用户会以为采集坏了），而且"换一天看看"这句建议只在真有多天可换时才给。
+    if (source.loading === true) {
+      notices.push({ key: 'loading', html: loadingNotice() });
+    } else if (dates.length > 0) {
+      notices.push({ key: 'date-missing', html: missingDateNotice(date, dates.length) });
+    } else {
+      notices.push({ key: 'no-data', html: noDataNotice() });
+    }
   } else if (!Array.isArray(daily.boards)) {
     // R101：JSON 合法但形状不对（boards 不是数组）。以前这里会抛错，页面永远停在"正在读取…"。
     notices.push({ key: 'broken', html: dataErrorNotice() });
@@ -442,12 +517,12 @@ export function buildBoardView(input = {}) {
     notices.push({ key: 'filtered-out', html: filteredOutNotice(title, items.length) });
   }
 
-  // 语言清单（R95）：来自这一榜当期的真实数据，稳定排序；认不出语言的单独计数。
-  const languages = [...new Set(items
-    .map((item) => item?.language)
-    .filter((language) => hasLanguage({ language })))]
-    .sort();
-  const unknownLanguageCount = items.filter((item) => !hasLanguage(item)).length;
+  // 卡片上下的说明语也在这里定（R102）：app.js 只管把它们贴到页面上，自己不写一个字。
+  const hints = [
+    { key: 'board-note', html: boardNote(boardId) },
+    { key: 'card-detail', html: cardDetailHint() },
+    { key: 'difficulty-filter', html: difficultyFilterHint(boardId) },
+  ].filter((hint) => hint.html !== '');
 
   return {
     items: visible,
@@ -459,6 +534,8 @@ export function buildBoardView(input = {}) {
     boardTitle: title,
     languages,
     unknownLanguageCount,
+    languageSelectionValid,
+    hints,
   };
 }
 
@@ -511,6 +588,14 @@ export function degradedNotice(degraded, notes) {
 }
 
 /**
+ * 数据还在读的时候的占位提示（R104：它与"读不出来"是两件事，不能混）。
+ * @returns {string} HTML
+ */
+export function loadingNotice() {
+  return '<p class="loading">正在读取榜单数据……</p>';
+}
+
+/**
  * 完全没有榜单数据时的提示（index.json 缺失或为空：还没跑过采集）。
  * R99：只给**今天真能用**的命令。`npm run demo` 眼下就是 `serve --demo`，而 `serve` 还不认识
  * `--demo`（Task 18 才实现），写进提示等于指一条走不通的路——所以写的是这条已经跑得通的命令。
@@ -536,13 +621,15 @@ export function dataErrorNotice() {
 
 /**
  * 某一天的数据文件没读到时的提示（文件缺了、或者地址写错了）。
+ * R104：建议必须与当下能力一致——日期选择器只在**有两天以上**数据时才出现，
+ * 所以只有一天数据时不能说"换一天看看"（那是个做不到的建议）。
  * @param {string} [date] 想看的那一天
- * @param {number} [dateCount] 一共有几天可看（>0 时提示"换一天"是条能走的路）
+ * @param {number} [dateCount] 一共有几天可看（≥2 才建议换一天）
  * @returns {string} HTML
  */
 export function missingDateNotice(date, dateCount) {
   const day = typeof date === 'string' && date !== '' ? date : '这一天';
-  const more = isNum(dateCount) && dateCount > 0
+  const more = isNum(dateCount) && dateCount >= 2
     ? '你可以在页面底部换一天再看，或者稍后刷新重试。'
     : `在项目目录里运行 ${COLLECT_COMMAND} 就会有一份数据。`;
   return `<div class="notice notice-empty"><strong>没有读到 ${escapeHtml(day)} 的榜单数据。</strong>${more}</div>`;

@@ -18,17 +18,22 @@ import { createStaticServer } from '../src/http/static-server.mjs';
 import {
   CHINESE_BADGE,
   LOCALIZED_ONLY_BADGE,
+  boardAcceptsDifficultyFilter,
   boardNotice,
   boardScore,
+  buildBoardView,
   chineseBadge,
   confidenceNotice,
   degradedNotice,
   difficultyBadge,
+  escapeAttr,
+  escapeHtml,
   evidenceNotice,
   factsForBoard,
   growthNotice,
   itemCard,
   itemMeta,
+  noDataNotice,
   scoreBars,
 } from '../public/render.mjs';
 
@@ -53,21 +58,28 @@ test('首页含三个榜签与筛选条文案', () => {
   assert.match(html, /有中文说明/);
 });
 
-test('app.js 渲染置信度文案与三步向导，且引用新手准备页', () => {
+test('置信度文案与三步向导：页面明说三种说法，且引用新手准备页', () => {
+  // 三种置信度的说明现在是页面上的正文（页脚那段），所以断言落在用户真正读到的文件上；
+  // 渲染这三种说法的代码在 render.mjs（下面另有断言钉住它怎么拼）。
+  const html = read('index.html');
+  assert.match(html, /估算/);
+  assert.match(html, /实测/);
+  assert.match(html, /GitHub 官方数据/);
+
   const js = read('app.js');
-  assert.match(js, /估算/);
-  assert.match(js, /实测/);
   assert.match(js, /prepare\.html/);
   assert.match(js, /三步/);
+  assert.match(js, /下一个版本/);
 });
 
 test('首页引入渲染模块，app.js 真的用它渲染（不是只写在注释里）', () => {
   assert.match(read('index.html'), /type="module"[^>]*src="\.?\/?app\.js"/);
   const js = read('app.js');
   assert.match(js, /from '\.\/render\.mjs'/);
-  // app.js 自己必须真的调用渲染函数，而不是留一句"以后要渲染"的注释。
+  // app.js 自己必须真的调用渲染函数、走状态函数（R93），而不是留一句"以后要渲染"的注释。
   assert.match(js, /itemCard\(\{/);
-  assert.match(js, /degradedNotice\(/);
+  assert.match(js, /buildBoardView\(\{/);
+  assert.match(js, /computeView\(/);
 });
 
 // ---------- ② 行话禁令（spec §4.3，产品约束） ----------
@@ -279,7 +291,175 @@ test('卡片元信息给出难度、中文与增长，且不含分数条（卡�
   assert.ok(!html.includes('热度'), '卡片上不放三轴明细，那是详情里的东西');
 });
 
-// ---------- ⑨ 静态服务器真的把页面送到浏览器 ----------
+// ---------- ⑨ 状态计算：该显示哪些条目、该给哪些提示（R93–R101） ----------
+//
+// 这一组是本文件里最重要的部分：以前"切榜单 / 改筛选 / 换日期之后会怎样"只能在浏览器里点着看，
+// 而沙箱起不了浏览器，于是 R94–R97、R100、R101 那几条缺陷全都溜了过去。
+// 现在这些判断都住在 render.mjs 的 buildBoardView 里（无 DOM），所以能在这里断言。
+
+/** 造一天的日报数据。 */
+const daily = (extra = {}) => ({ date: '2026-10-10', degraded: false, notes: [], boards: [], ...extra });
+
+/** 按 id 找一个通知（找不到返回 null）。 */
+const noticeOf = (view, key) => view.notices.find((n) => n.key === key) ?? null;
+
+/** 三条难度不同的条目，用来验筛选。 */
+const threeItems = () => [
+  item({ ownerRepo: 'a/one', name: 'one', rank: 1, grade: 'green', hasChinese: true, language: 'Python', stars: 100 }),
+  item({ ownerRepo: 'b/two', name: 'two', rank: 2, grade: 'yellow', hasChinese: false, language: 'Go', stars: 200 }),
+  item({ ownerRepo: 'c/three', name: 'three', rank: 3, grade: 'red', hasChinese: false, language: 'Go', stars: 300 }),
+];
+
+test('R94：degraded 通知由状态函数产出，切榜单/改筛选/换日期之后都还在', () => {
+  const items = threeItems();
+  const notes = ['trending 页面没抓到'];
+  // 用户视角的三次"点一下"：切到新手榜、勾上难度筛选、换到另一天。三次都重新算一遍视图。
+  const base = { items, notes, daily: daily({ degraded: true, notes }) };
+
+  const weekly = buildBoardView({ ...base, boardId: 'weekly' });
+  assert.match(noticeOf(weekly, 'degraded').html, /数据不完整/);
+  assert.match(noticeOf(weekly, 'degraded').html, /trending 页面没抓到/);
+
+  const newbie = buildBoardView({ ...base, boardId: 'newbie' });
+  assert.ok(noticeOf(newbie, 'degraded') !== null, '切榜单之后 degraded 通知必须还在');
+
+  const filtered = buildBoardView({ ...base, boardId: 'weekly', filters: { easy: true } });
+  assert.ok(noticeOf(filtered, 'degraded') !== null, '改筛选之后 degraded 通知必须还在');
+
+  const otherDay = buildBoardView({ ...base, boardId: 'classic', filters: { language: 'Go' } });
+  assert.ok(noticeOf(otherDay, 'degraded') !== null, '换日期/换筛选之后 degraded 通知必须还在');
+
+  // 换到数据完整的那一天，通知必须消失（不能一直挂着）。
+  const healthy = buildBoardView({ items, daily: daily({ degraded: false }), boardId: 'weekly' });
+  assert.equal(noticeOf(healthy, 'degraded'), null);
+});
+
+test('R94：notes 缺失也要能渲染 degraded（不能因为少了 notes 就不提示）', () => {
+  const view = buildBoardView({ items: threeItems(), boardId: 'weekly', daily: daily({ degraded: true }) });
+  const notice = noticeOf(view, 'degraded');
+  assert.ok(notice !== null);
+  assert.match(notice.html, /数据不完整/);
+});
+
+test('R95：语言清单来自当期真实数据，且语言筛选真的过滤条目', () => {
+  const items = threeItems();
+  const view = buildBoardView({ items, boardId: 'weekly' });
+  // 稳定排序（Go 在 Python 前面），不是数据里的出现顺序。
+  assert.deepEqual(view.languages, ['Go', 'Python']);
+  assert.equal(view.unknownLanguageCount, 0);
+
+  const go = buildBoardView({ items, boardId: 'weekly', filters: { language: 'Go' } });
+  assert.equal(go.items.length, 2);
+  assert.ok(go.items.every((i) => i.language === 'Go'));
+
+  // 认不出语言的项目也要能被单独筛出来，否则它们在"全部语言"里混着说不清。
+  const mixed = [...items, item({ ownerRepo: 'd/four', name: 'four', rank: 4, language: null })];
+  const mixedView = buildBoardView({ items: mixed, boardId: 'weekly' });
+  assert.equal(mixedView.unknownLanguageCount, 1);
+  const unknownOnly = buildBoardView({ items: mixed, boardId: 'weekly', filters: { language: '__unknown__' } });
+  assert.equal(unknownOnly.items.length, 1);
+  assert.equal(unknownOnly.items[0].name, 'four');
+});
+
+test('R95：app.js 真的调用了语言下拉渲染（不能只是定义在那里）', () => {
+  const js = read('app.js');
+  assert.match(js, /renderLanguageOptions\(/);
+  // 定义一处 + 至少一处调用。
+  assert.ok(js.split('renderLanguageOptions(').length >= 3, '语言下拉必须被真的调用，而不是只定义');
+});
+
+test('R96：经典榜忽略难度筛选，切过去以后条目数不变', () => {
+  const items = threeItems();
+  const filters = { easy: true };
+  const weekly = buildBoardView({ items, boardId: 'weekly', filters });
+  assert.equal(weekly.items.length, 1, '周榜上难度筛选照常生效');
+
+  const classic = buildBoardView({ items, boardId: 'classic', filters });
+  assert.equal(classic.items.length, items.length, '经典榜不参与评分，难度筛选对它不生效');
+  assert.equal(boardAcceptsDifficultyFilter('classic'), false);
+  assert.equal(boardAcceptsDifficultyFilter('weekly'), true);
+  assert.equal(boardAcceptsDifficultyFilter('newbie'), true);
+});
+
+test('R97：页面文案不得声称"点开就能看到三步安装说明"', () => {
+  const js = read('app.js');
+  // 现在点开只有一句"下个版本"的提示，所以正文里不许出现"点开（就）能看到 … 三步安装说明"
+  // 这种当场兑现的承诺（"还在做"那种说明不算）。断言必须精确：粗糙的 /点开.*三步/ 会命中
+  // 那句本来就在如实说明"还在做"的话，把正确的文案判成错的。
+  assert.ok(!/点开[^。；\n]{0,20}(可以看到|就能看到|可查看|即可看到)[^。；\n]{0,20}三步安装说明/.test(js),
+    '文案承诺了还不存在的抽屉');
+  assert.ok(!/点开[^。；\n]{0,20}(可以看到|就能看到)[^。；\n]{0,20}(详细介绍|详细说明)/.test(js),
+    '文案承诺了还不存在的详情');
+  assert.match(js, /还在做/, '要说清"还在做"，而不是含糊其辞');
+});
+
+test('R98：外部输入进 HTML 前一律转义（属性与正文两条通道）', () => {
+  assert.equal(escapeHtml('<b>"x" & \'y\'</b>'), '&lt;b&gt;&quot;x&quot; &amp; \'y\'&lt;/b&gt;');
+  assert.equal(escapeAttr('a"b\'c<d'), 'a&quot;b&#39;c&lt;d');
+
+  // 中文徽章里的文件名来自 README 检测（外部输入），必须转义。
+  const badge = chineseBadge({ hasChinese: false, localizedFiles: ['README."ja".md'] });
+  assert.ok(!badge.includes('"ja"'), '属性里的引号必须被转义');
+  assert.match(badge, /&quot;/);
+
+  // 描述里的 HTML 不能真的变成标签。
+  const card = itemCard({ boardId: 'weekly', item: item({ description: '<img src=x onerror=alert(1)>' }) });
+  assert.ok(!card.includes('<img'), '描述里的标签必须被转义，不能让原始串出现');
+  assert.match(card, /&lt;img/);
+
+  // 榜单名与条目里的项目全名也是同一份外部输入。
+  const dailyTitle = buildBoardView({ items: threeItems(), boardId: 'weekly', boardTitle: '<b>坏榜名</b>' });
+  assert.equal(dailyTitle.boardTitle, '<b>坏榜名</b>'); // 原样返回，转义由渲染方负责
+  const dateOptions = ['2026-10-10" onmouseover="x'];
+  assert.match(escapeAttr(dateOptions[0]), /&quot;/);
+});
+
+test('R99：无数据提示只给今天真能用的命令', () => {
+  const notice = noDataNotice();
+  assert.match(notice, /npm run collect --offline/);
+  // `npm run demo` 今天是 `serve --demo`，而 serve 还不认识 --demo：不能指一条走不通的路。
+  assert.ok(!notice.includes('npm run demo'), '不能推荐一条现在跑不通的命令');
+  assert.match(notice, /还没有任何榜单数据/);
+});
+
+test('R100：统计文案说的是当前看得见的条数', () => {
+  const items = threeItems();
+  const all = buildBoardView({ items, boardId: 'weekly' });
+  assert.equal(all.countText, '当前显示 3 个项目（这一榜共 3 个）');
+
+  const filtered = buildBoardView({ items, boardId: 'weekly', filters: { easy: true } });
+  assert.equal(filtered.visibleCount, 1);
+  assert.equal(filtered.totalCount, 3);
+  assert.match(filtered.countText, /当前显示 1 个项目/);
+  assert.ok(!/^这一榜共 3 个项目$/.test(filtered.countText), '不能只报筛选前的总数');
+
+  const empty = buildBoardView({ items: [], boardId: 'weekly', daily: daily() });
+  assert.equal(empty.countText, '');
+});
+
+test('R101：boards 不是数组时给提示而不是抛错', () => {
+  const broken = { date: '2026-10-10', degraded: false, boards: '不是数组' };
+  // 以前这里会 TypeError，页面永远停在"正在读取榜单数据……"。
+  const view = buildBoardView({ items: [], boardId: 'weekly', daily: broken });
+  assert.match(noticeOf(view, 'broken').html, /读不出来/);
+  assert.equal(view.items.length, 0);
+
+  // items 本身不是数组、daily 是 null / 字符串，都不能抛。
+  assert.doesNotThrow(() => buildBoardView({ items: null, boardId: 'weekly', daily: broken }));
+  assert.doesNotThrow(() => buildBoardView({ items: 'x', boardId: 'weekly', daily: 'y' }));
+  assert.doesNotThrow(() => buildBoardView({}));
+  assert.doesNotThrow(() => buildBoardView());
+  const noDaily = buildBoardView({ items: [], boardId: 'weekly', daily: null });
+  assert.match(noticeOf(noDaily, 'no-data').html, /还没有任何榜单数据/);
+});
+
+test('R93：未知榜单名不会变成空白页（回落到中文提示）', () => {
+  const view = buildBoardView({ items: [], boardId: 'nope', daily: daily() });
+  assert.equal(view.boardTitle, '这个榜');
+  assert.match(noticeOf(view, 'empty').html, /暂时没有可以展示的项目/);
+});
+
+// ---------- ⑩ 静态服务器真的把页面送到浏览器 ----------
 
 test('静态服务器提供的首页确实带着三个榜签', async () => {
   const server = createStaticServer({ root: 'public' });

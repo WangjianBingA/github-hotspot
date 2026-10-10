@@ -1,17 +1,22 @@
 // GitHub 好玩榜 —— 页面渲染层（纯函数，不碰 DOM、不读时钟、不发请求）。
 //
-// 为什么单独一层：这些函数决定"用户看到哪几个字"，而"不许说谎"是本项目的产品约束
-// （spec §4.3 术语翻译表、§7.3 界面必须诚实），所以它们必须能被 node:test 直接断言，
-// 而不是埋在事件回调里只能靠肉眼看。输入是 JSON 里的条目，输出是 HTML 字符串。
+// 为什么单独一层：这些函数决定"用户看到哪几个字"与"哪些条目真的显示出来"，
+// 而"不许说谎"是本项目的产品约束（spec §4.3 术语翻译表、§7.3 界面必须诚实），
+// 所以它们必须能被 node:test 直接断言，而不是埋在事件回调里只能靠肉眼看。
+// 输入是 JSON 里的数据与当前界面状态，输出是 HTML 字符串 / 该渲染的通知。
 //
-// 五条硬规矩（每一条都对应一次真实缺陷）：
+// 这个文件**没有 import、没有时钟、没有网络、也没有 DOM**：正因如此，
+// "切榜单 / 改筛选 / 换日期之后该显示什么"才能在没有浏览器的环境里被测试
+// （R93：只能在浏览器里验的东西，就是验不了的东西）。
+//
+// 六条硬规矩（每一条都对应一次真实缺陷）：
 //   · 行话禁令（spec §4.3）：界面上不出现外文行话原词，也不泄露内部字段名。
-//     翻译表：收藏人数 / 收藏速度 → 用"收藏"这类说法；"拿去改造"代替那个以 F 开头的词；
+//     翻译表：用"收藏"这类说法代替那个以 S 开头的词；"拿去改造"代替那个以 F 开头的词；
 //     "作者管不管事"代替那个以 I 开头的词；"作者已停止维护"代替那个表示停更的英文词；
 //     "项目"代替那个表示代码仓库的词。本文件自身也不写这些原词：一旦出现在注释里，
 //     下一个人复制粘贴时就可能顺手带进界面文案。行话清单由 test/page-content.test.mjs 钉住。
-//   · R25：经典必玩榜按总收藏排序、**不参与三轴评分**，所以那个榜不渲染分数摘要
-//     （渲染了就是在暗示"它是按分数排的"）；改说总收藏人数 + 最后更新时间。
+//   · R25：经典必玩榜按总收藏排序、**不参与三轴评分**，所以那个榜不渲染分数，
+//     也不接受"按难度筛"（见 buildBoardView）；改说总收藏人数 + 最后更新时间。
 //   · R64：徽章「🈶 有中文说明」只认 hasChinese === true。只有非中文本地化文档时如实说
 //     「有本地化文档（非中文）」—— 绝不能拿它冒充中文。
 //   · 置信度（spec §7.3）：估算值写"约 N（估算）"、转述写"N（GitHub 官方数据）"、
@@ -19,24 +24,27 @@
 //     那时不许渲染成"涨 0"（那是在陈述一件我们并不知道的事实），整行省略。
 //   · 取证来源（install.evidence）不许原样出现：那是内部用的英文键名，
 //     翻译成一句中文说法，认不出来就不说。
+//   · 所有来自 JSON 的字符串都是**外部输入**，进 HTML 之前一律转义（escapeHtml / escapeAttr）。
+//
+// 本文件自身被当作纯文本扫过（test/page-content.test.mjs）：注释与字符串里都不许出现行话原词。
 
 /** 中文徽章：真的查到中文文档才给。 */
 export const CHINESE_BADGE = '🈶 有中文说明';
 /** 只有非中文本地化文档时的徽章（R64）：照实说，不冒充中文。 */
 export const LOCALIZED_ONLY_BADGE = '有本地化文档（非中文）';
 
-/** 难度徽章文案（spec §4.2）。 */
+/** 三个榜单的中文名：数据文件里的 title 缺失时用它兜底。 */
+const BOARD_TITLES = new Map([
+  ['weekly', '本周飙升'],
+  ['newbie', '新手能玩'],
+  ['classic', '经典必玩'],
+]);
+
+/** 难度徽章文案（spec §4.2），也是筛选条上那句话的来源。 */
 const GRADE_BADGES = new Map([
   ['green', '🟢 一键就能玩'],
   ['yellow', '🟡 要几步'],
   ['red', '🔴 要懂点技术'],
-]);
-
-/** 难度徽章后面那句"要准备什么"（spec §4.2 的界面文案）。 */
-const GRADE_HINTS = new Map([
-  ['green', '下载就能用'],
-  ['yellow', '跟着 3 步走就行'],
-  ['red', '需要一点技术基础'],
 ]);
 
 /** 涨星速度的三种置信度 → 前缀与括号说明（与 src/score/reasons.mjs 同一口径，spec §7.3）。 */
@@ -76,12 +84,42 @@ const FULL_MARKS = { hot: 45, reputation: 30, runnable: 25 };
 /** 没问到新增收藏时那句诚实话（**不是**"涨 0"：那是在陈述我们并不知道的事实）。 */
 const GROWTH_UNKNOWN_TEXT = '这一周的新增收藏，我们没有查到';
 
-/** 把值转成 HTML 安全文本：所有来自 JSON 的字符串都要过这一道。 */
-const esc = (value) => String(value ?? '')
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;');
+/** 经典榜的 id：唯一一个不参与三轴评分、也不接受难度筛选的榜（R25）。 */
+const CLASSIC_ID = 'classic';
+
+/** 语言筛选里代表"这些条目没有标注语言"的那一项（与 public/app.js 的常量同名同值）。 */
+const UNKNOWN_LANGUAGE = '__unknown__';
+
+/** 这一条有没有标注语言（空串与缺失都算"没有标注"）。 */
+const hasLanguage = (item) => typeof item?.language === 'string' && item.language !== '';
+
+/** 本地还没跑过采集时，给新手的那条命令（R99：只写今天真能用的一条）。 */
+const COLLECT_COMMAND = '<code>npm run collect --offline</code>';
+
+// ---------- 转义（外部输入进 HTML 的唯一通道） ----------
+
+/**
+ * 把值转成 HTML 安全文本。所有来自 JSON 的字符串都要过一次。
+ * 这是本模块唯一的转义出口：内部一律用它，不自己拼 replace 链。
+ * @param {*} value 任意值（null / undefined 变成空串）
+ * @returns {string}
+ */
+export function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * 放进 HTML **属性**里的值（引号必须转义，否则可以提前闭合属性）。
+ * @param {*} value 任意值
+ * @returns {string}
+ */
+export function escapeAttr(value) {
+  return escapeHtml(value).replace(/'/g, '&#39;');
+}
 
 /** 有限数字判定（拿不到就是拿不到，绝不用 0 顶替）。 */
 const isNum = (value) => typeof value === 'number' && Number.isFinite(value);
@@ -89,13 +127,10 @@ const isNum = (value) => typeof value === 'number' && Number.isFinite(value);
 /** 千分位；拿不到数字时返回空串。 */
 const num = (value) => (isNum(value) ? value.toLocaleString('zh-CN') : '');
 
-/** 项目名：没有 name 时退回 ownerRepo 的后半段；两者都没有就说"这个项目"。 */
-function projectName(item) {
-  if (typeof item?.name === 'string' && item.name !== '') return item.name;
-  const full = typeof item?.ownerRepo === 'string' ? item.ownerRepo : '';
-  const tail = full.split('/').pop();
-  return tail === undefined || tail === '' ? '这个项目' : tail;
-}
+/** 一定是数组（数据文件是外部输入，`boards` 可能不是数组）。 */
+const asArray = (value) => (Array.isArray(value) ? value : []);
+
+// ---------- 文案与徽章 ----------
 
 /**
  * 本周新增收藏。三态照实标注（spec §7.3），不知道时**整行不显示**（见文件头第四条）。
@@ -128,8 +163,7 @@ export function confidenceNotice(velocity) {
   const source = velocity?.velocitySource ?? velocity?.source ?? null;
   if (source === 'none' || !isNum(velocity?.gained3d)) return '';
   const words = CONFIDENCE_WORDS.get(velocity?.confidence);
-  const tail = words ? words.tail : '';
-  return `近 3 日新增 ${num(velocity.gained3d)}${tail}`;
+  return `近 3 日新增 ${num(velocity.gained3d)}${words ? words.tail : ''}`;
 }
 
 /**
@@ -139,11 +173,7 @@ export function confidenceNotice(velocity) {
  */
 export function evidenceNotice(evidence) {
   if (typeof evidence !== 'string' || evidence === '') return '';
-  const known = EVIDENCE_TEXTS.get(evidence);
-  if (known) return known;
-  // 'none' 表示归属不成立，那时根本不该有安装命令，所以这里不替它编话。
-  if (evidence === 'none') return '';
-  return '我们查到了官方出处，确认这个包属于这个项目。';
+  return EVIDENCE_TEXTS.get(evidence) ?? '我们查到了官方出处，确认这个包属于这个项目。';
 }
 
 /**
@@ -153,7 +183,7 @@ export function evidenceNotice(evidence) {
  */
 export function difficultyBadge(grade) {
   const text = GRADE_BADGES.get(grade);
-  return text === undefined ? '' : `<span class="badge badge-${esc(grade)}">${text}</span>`;
+  return text === undefined ? '' : `<span class="badge badge-${escapeAttr(grade)}">${text}</span>`;
 }
 
 /**
@@ -166,21 +196,23 @@ export function difficultyBadge(grade) {
  */
 export function chineseBadge(item) {
   if (item?.hasChinese === true) return `<span class="badge badge-cn">${CHINESE_BADGE}</span>`;
-  const files = Array.isArray(item?.localizedFiles) ? item.localizedFiles.filter((f) => typeof f === 'string' && f !== '') : [];
+  const files = asArray(item?.localizedFiles).filter((f) => typeof f === 'string' && f !== '');
   if (files.length === 0) return '';
-  return `<span class="badge badge-cn-alt" title="${esc(files.join('、'))}">${LOCALIZED_ONLY_BADGE}</span>`;
+  return `<span class="badge badge-cn-alt" title="${escapeAttr(files.join('、'))}">${LOCALIZED_ONLY_BADGE}</span>`;
 }
 
+// ---------- 分数（周榜与新手榜专用；经典榜一律空串，R25） ----------
+
 /**
- * 三轴分数摘要（周榜与新手榜用）。
- * R25：经典榜**不参与三轴评分**，所以传进来的 boardId 是 classic 时直接返回空串——
- * 那个榜按总收藏排序，给它画分数条等于告诉用户"它是按分数排上来的"。
+ * 三轴分数摘要。
+ * R25：经典榜**不参与三轴评分**，所以 boardId 是 classic 时直接返回空串——
+ * 那个榜按总收藏排序，给它画分数等于告诉用户"它是按分数排上来的"。
  * @param {string} boardId 榜单 id
  * @param {{ scores?: object }} item 条目
  * @returns {string} 一行分数摘要；经典榜或没有分数时是空串
  */
 export function boardScore(boardId, item) {
-  if (boardId === 'classic') return '';
+  if (boardId === CLASSIC_ID) return '';
   const scores = item?.scores;
   if (!scores || !isNum(scores.total)) return '';
   const axes = AXES
@@ -191,20 +223,18 @@ export function boardScore(boardId, item) {
 }
 
 /**
- * 三轴分数条（详情里"为什么上榜"摊开公式时用，spec §4.4）。
- * 经典榜同样不渲染（R25）。
+ * 三轴分数条（详情里"为什么上榜"摊开公式时用，spec §4.4）。经典榜同样不渲染（R25）。
  * @param {string} boardId 榜单 id
  * @param {{ scores?: object }} item 条目
  * @returns {string} 分数条 HTML；经典榜或没有分数时是空串
  */
 export function scoreBars(boardId, item) {
-  if (boardId === 'classic') return '';
+  if (boardId === CLASSIC_ID) return '';
   const scores = item?.scores;
   if (!scores) return '';
   const rows = AXES.filter((axis) => isNum(scores[axis.key])).map((axis) => {
     const value = scores[axis.key];
-    // 轴满分写在权重表里（热度 45 / 口碑 30 / 新手友好 25）：宽度按满分折算，
-    // 满分读不出来时退回按 100 折算，绝不编一个"满格"的进度条。
+    // 宽度按该轴满分折算；满分读不出来时退回按 100 折算，绝不编一个"满格"的进度条。
     const full = FULL_MARKS[axis.key] ?? 100;
     const width = Math.max(0, Math.min(100, Math.round((value / full) * 100)));
     return `<div class="bar-row"><span class="bar-label">${axis.label}</span>`
@@ -215,9 +245,10 @@ export function scoreBars(boardId, item) {
   return `<div class="score-bars">${rows.join('')}</div>`;
 }
 
+// ---------- 事实 ----------
 
 /**
- * 项目基本事实（详情与经典榜卡片共用）。拿不到的事实整条不列，绝不用一个占位符假装成"没有"。
+ * 项目基本事实（详情用）。拿不到的事实整条不列，绝不用一个占位符假装成"没有"。
  * @param {object} item 条目
  * @returns {{ label: string, value: string }[]}
  */
@@ -229,7 +260,7 @@ export function factList(item) {
   const pushed = formatTime(item?.pushedAt);
   if (pushed !== '') facts.push({ label: '最后更新时间', value: pushed });
   if (typeof item?.license === 'string' && item.license !== '') facts.push({ label: '许可证', value: item.license });
-  // 数据里那个表示"作者主动停更"的布尔字段（上游契约用的英文键名）在这里翻译成一句诚实的中文。
+  // 数据里那个表示"作者主动停更"的布尔字段（上游契约用的英文键名）翻译成一句诚实的中文。
   // 字段名本身绝不渲染出去：界面上只说结论。
   if (item?.archived === true) facts.push({ label: '维护状态', value: '作者已停止维护' });
   return facts;
@@ -244,7 +275,7 @@ export function factList(item) {
  * @returns {{ label: string, value: string }[]}
  */
 export function factsForBoard(boardId, item) {
-  if (boardId === 'classic') {
+  if (boardId === CLASSIC_ID) {
     const facts = [];
     if (isNum(item?.stars)) facts.push({ label: '总收藏人数', value: num(item.stars) });
     const pushed = formatTime(item?.pushedAt);
@@ -271,6 +302,16 @@ export function formatTime(iso) {
   return `${date.getUTCFullYear()} 年 ${pad(date.getUTCMonth() + 1)} 月 ${pad(date.getUTCDate())} 日`;
 }
 
+// ---------- 卡片 ----------
+
+/** 项目名：没有 name 时退回项目全名的后半段；两者都没有就说"这个项目"。 */
+function projectName(item) {
+  if (typeof item?.name === 'string' && item.name !== '') return item.name;
+  const full = typeof item?.ownerRepo === 'string' ? item.ownerRepo : '';
+  const tail = full.split('/').pop();
+  return tail === undefined || tail === '' ? '这个项目' : tail;
+}
+
 /**
  * 卡片上的元信息：难度徽章 + 中文徽章 + 新增收藏（含近 3 日，有数据才显示）+ 事实。
  * 卡片上**不放三轴明细**（那是点开详情才看的东西），所以这里不调 boardScore。
@@ -291,29 +332,163 @@ export function itemMeta({ boardId, item }) {
   };
   const growth = growthNotice(velocity);
   const growthHtml = growth.known
-    ? `<span class="growth growth-${esc(growth.tone)}">${esc(growth.text)}</span>`
+    ? `<span class="growth growth-${escapeAttr(growth.tone)}">${escapeHtml(growth.text)}</span>`
     : `<span class="growth growth-unknown">${GROWTH_UNKNOWN_TEXT}</span>`;
   // 近 3 日新增：日线数据确实覆盖了 3 天时才有这个值，没有就整条不显示（绝不当成"3 天涨 0"）。
   const threeDay = confidenceNotice(velocity);
-  const threeDayHtml = threeDay === '' ? '' : `<span class="growth growth-3d">${esc(threeDay)}</span>`;
+  const threeDayHtml = threeDay === '' ? '' : `<span class="growth growth-3d">${escapeHtml(threeDay)}</span>`;
   const facts = factsForBoard(boardId, item)
-    .map((fact) => `<span class="fact"><span class="fact-label">${esc(fact.label)}</span>${esc(fact.value)}</span>`)
+    .map((fact) => `<span class="fact"><span class="fact-label">${escapeHtml(fact.label)}</span>${escapeHtml(fact.value)}</span>`)
     .join('');
   return `<div class="badges">${badges}</div><div class="meta-line">${growthHtml}${threeDayHtml}${facts}</div>`;
 }
 
 /**
- * 榜单为空 / 这一期没有数据时的提示（第一等状态，spec §8）。
- * 说法必须区分"这一期确实没有条目"与"这一期数据不完整"——原因不同，不能混成一句。
+ * 一条项目卡片的内部内容。外层的 `<article class="card">` 由 app.js 包上
+ * （Task 17 的详情抽屉挂在它上面）。
+ * @param {{ boardId: string, item: object }} input
+ * @returns {string} HTML
+ */
+export function itemCard({ boardId, item }) {
+  const rank = isNum(item?.rank) ? `<span class="rank">${item.rank}</span>` : '';
+  const description = typeof item?.description === 'string' && item.description !== ''
+    ? escapeHtml(item.description)
+    : '这个项目没有写一句话介绍。';
+  const reasons = asArray(item?.reasons).filter((r) => typeof r === 'string' && r !== '');
+  const reasonHtml = reasons.length === 0
+    ? ''
+    : `<ul class="reasons">${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>`;
+  const full = typeof item?.ownerRepo === 'string' ? item.ownerRepo : '';
+  const link = full === '' ? '' : `<a class="project-link" href="https://github.com/${escapeAttr(full)}" target="_blank" rel="noreferrer noopener">打开项目主页</a>`;
+
+  return `${rank}<div class="card-body">`
+    + `<h3 class="card-title">${escapeHtml(projectName(item))}</h3>`
+    + `<p class="card-desc">${description}</p>`
+    + itemMeta({ boardId, item })
+    + boardScore(boardId, item)
+    + reasonHtml
+    + `<div class="card-actions">${link}<span class="hint">想看怎么装？点开这张卡片。</span></div>`
+    + '</div>';
+}
+
+// ---------- 状态：该显示哪些条目、该给哪些提示（R93） ----------
+
+/**
+ * 这个榜收不收"按难度筛"（R25 / R96）。
+ * 经典必玩榜按总收藏排序、不参与三轴评分，难度分级对它没有意义，所以它**忽略**这个筛选。
+ * 注意是"忽略"，不是在界面上把开关禁用：禁用会制造"勾着却取消不掉"的死路，
+ * 而且会让提示语与实现各说各话（曾经就是那样，见 R96）。
+ * @param {string} boardId 榜单 id
+ * @returns {boolean}
+ */
+export function boardAcceptsDifficultyFilter(boardId) {
+  return boardId !== CLASSIC_ID;
+}
+
+/**
+ * 算出"这一屏到底该显示什么"（R93）。所有与 DOM 无关的状态判断都在这里：
+ * 通知列表、通过筛选的条目、统计文案、这一期出现过的语言。
+ *
+ * 通知**每次调用都重新算一遍**（R94）：degraded 不是"进入页面时插一次"，
+ * 所以切榜单 / 改筛选 / 换日期之后它照样在；换到数据完整的那一天它就消失。
+ *
+ * @param {{
+ *   degraded?: boolean, notes?: string[], boardId?: string, boardTitle?: string,
+ *   items?: object[], filters?: { easy?: boolean, chinese?: boolean, language?: string },
+ *   daily?: object|null, date?: string,
+ * }} input
+ * @returns {{
+ *   items: object[],
+ *   notices: { key: string, html: string }[],
+ *   totalCount: number, visibleCount: number, countText: string,
+ *   boardTitle: string, languages: string[], unknownLanguageCount: number,
+ * }}
+ */
+export function buildBoardView(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  const boardId = typeof source.boardId === 'string' ? source.boardId : '';
+  const daily = source.daily && typeof source.daily === 'object' ? source.daily : null;
+  const items = asArray(source.items);
+  const filters = source.filters && typeof source.filters === 'object' ? source.filters : {};
+  const title = typeof source.boardTitle === 'string' && source.boardTitle !== ''
+    ? source.boardTitle
+    : (BOARD_TITLES.get(boardId) ?? '这个榜');
+
+  // 筛选：R96 经典榜忽略难度筛选；R64 中文筛选只认 hasChinese；语言筛选按相等比较。
+  const wantEasy = filters.easy === true && boardAcceptsDifficultyFilter(boardId);
+  const language = typeof filters.language === 'string' ? filters.language : '';
+  const visible = items.filter((item) => {
+    if (wantEasy && item?.grade !== 'green') return false;
+    if (filters.chinese === true && item?.hasChinese !== true) return false;
+    if (language === UNKNOWN_LANGUAGE) return !hasLanguage(item);
+    if (language !== '') return item?.language === language;
+    return true;
+  });
+
+  const notices = [];
+  // 顺序即重要性：数据不完整排最前（它影响整页读数），然后是"这块为什么是空的"。
+  if (daily?.degraded === true) {
+    notices.push({ key: 'degraded', html: degradedNotice(true, daily.notes) });
+  }
+  if (daily === null) {
+    notices.push({ key: 'no-data', html: noDataNotice() });
+  } else if (!Array.isArray(daily.boards)) {
+    // R101：JSON 合法但形状不对（boards 不是数组）。以前这里会抛错，页面永远停在"正在读取…"。
+    notices.push({ key: 'broken', html: dataErrorNotice() });
+  } else if (items.length === 0) {
+    notices.push({ key: 'empty', html: boardNotice({ boardTitle: title, itemCount: 0 }) });
+  } else if (visible.length === 0) {
+    // 有条目但被筛没了：与"这一期没有条目"分开说，否则用户会以为采集坏了。
+    notices.push({ key: 'filtered-out', html: filteredOutNotice(title, items.length) });
+  }
+
+  // 语言清单（R95）：来自这一榜当期的真实数据，稳定排序；认不出语言的单独计数。
+  const languages = [...new Set(items
+    .map((item) => item?.language)
+    .filter((language) => hasLanguage({ language })))]
+    .sort();
+  const unknownLanguageCount = items.filter((item) => !hasLanguage(item)).length;
+
+  return {
+    items: visible,
+    notices,
+    totalCount: items.length,
+    visibleCount: visible.length,
+    // R100：统计文案说的是**当前看得见的**条数，同时把总数写在括号里，两个数字都不会误导。
+    countText: items.length === 0 ? '' : `当前显示 ${visible.length} 个项目（这一榜共 ${items.length} 个）`,
+    boardTitle: title,
+    languages,
+    unknownLanguageCount,
+  };
+}
+
+// ---------- 提示（第一等状态，spec §8） ----------
+
+/**
+ * 榜单为空时的提示（这一期确实没有条目）。
+ * 与被筛选滤空的那句**分开**：原因不同，不能混成一句。
  * @param {{ boardTitle?: string, itemCount?: number }} [input]
  * @returns {string} HTML；有条目时是空串
  */
 export function boardNotice(input = {}) {
-  const count = input.itemCount;
+  const count = input?.itemCount;
   if (isNum(count) && count > 0) return '';
-  const title = typeof input.boardTitle === 'string' && input.boardTitle !== '' ? input.boardTitle : '这个榜';
-  return `<p class="empty">「${esc(title)}」暂时没有可以展示的项目。可能是这一期还没采集到合适的项目，`
-    + '也可能是筛选条件把条目都过滤掉了，换一个筛选条件或者换一天再看看。</p>';
+  const title = typeof input?.boardTitle === 'string' && input.boardTitle !== '' ? input.boardTitle : '这个榜';
+  return `<p class="empty">「${escapeHtml(title)}」暂时没有可以展示的项目。`
+    + '可能是这一期还没采集到合适的项目，换一天或者换一个榜再看看。</p>';
+}
+
+/**
+ * 有条目、但当前筛选条件把它们全滤掉了。
+ * @param {string} boardTitle 榜单名
+ * @param {number} total 这一期的条目数
+ * @returns {string} HTML
+ */
+export function filteredOutNotice(boardTitle, total) {
+  const title = typeof boardTitle === 'string' && boardTitle !== '' ? boardTitle : '这个榜';
+  const count = isNum(total) ? ` ${total} ` : ' ';
+  return `<p class="empty">「${escapeHtml(title)}」这一期有${count}个项目，`
+    + '但你现在的筛选条件下一个都不剩了。把筛选放宽一点就能看到。</p>';
 }
 
 /**
@@ -324,9 +499,9 @@ export function boardNotice(input = {}) {
  */
 export function degradedNotice(degraded, notes) {
   if (degraded !== true) return '';
-  const lines = (Array.isArray(notes) ? notes : [])
+  const lines = asArray(notes)
     .filter((note) => typeof note === 'string' && note !== '')
-    .map((note) => `<li>${esc(note)}</li>`)
+    .map((note) => `<li>${escapeHtml(note)}</li>`)
     .join('');
   return '<div class="notice notice-degraded"><strong>本期数据不完整。</strong>'
     + '有些项目的信息这一期没采集到（通常是网络或额度问题），所以下面的内容可能不全，'
@@ -336,13 +511,27 @@ export function degradedNotice(degraded, notes) {
 }
 
 /**
- * 数据完全读不到时的提示（例如 index.json 还是空的：还没跑过采集）。
+ * 完全没有榜单数据时的提示（index.json 缺失或为空：还没跑过采集）。
+ * R99：只给**今天真能用**的命令。`npm run demo` 眼下就是 `serve --demo`，而 `serve` 还不认识
+ * `--demo`（Task 18 才实现），写进提示等于指一条走不通的路——所以写的是这条已经跑得通的命令。
  * @returns {string} HTML
  */
 export function noDataNotice() {
   return '<div class="notice notice-empty"><strong>还没有任何榜单数据。</strong>'
-    + '这个网站读的是数据文件，需要先运行一次采集（或者用演示数据启动）才会出现内容。'
-    + '如果你是在本地预览，可以在项目目录里运行 <code>npm run collect</code> 或 <code>npm run demo</code>。</div>';
+    + '这个网站读的是数据文件，需要先跑一次采集才会有内容。'
+    + `第一次用、又不想联网的话，在项目目录里运行 ${COLLECT_COMMAND}（它用内置样本出一份完整数据），`
+    + '然后刷新这个页面。</div>';
+}
+
+/**
+ * 数据文件在、但形状不对（例如 `boards` 不是数组）时的提示（R101）。
+ * 一句"读不出来"远比一个永远转圈的空白页诚实。
+ * @returns {string} HTML
+ */
+export function dataErrorNotice() {
+  return '<div class="notice notice-empty"><strong>这一期的数据文件读不出来。</strong>'
+    + '文件在，但里面的内容和这个页面期待的形状不一样（可能是采集写到一半、或者文件被改坏了）。'
+    + `重跑一次采集就会覆盖掉它：在项目目录里运行 ${COLLECT_COMMAND}。也可以用页面底部的日期选择器换一天看看。</div>`;
 }
 
 /**
@@ -355,33 +544,6 @@ export function missingDateNotice(date, dateCount) {
   const day = typeof date === 'string' && date !== '' ? date : '这一天';
   const more = isNum(dateCount) && dateCount > 0
     ? '你可以在页面底部换一天再看，或者稍后刷新重试。'
-    : '这个网站读的是数据文件，需要先运行一次采集才会有内容。';
-  return `<div class="notice notice-empty"><strong>没有读到 ${esc(day)} 的榜单数据。</strong>${more}</div>`;
-}
-
-/**
- * 一条项目卡片的内部内容（外层的 <article> 由 app.js 包上，Task 17 的详情抽屉挂在它上面）。
- * @param {{ boardId: string, item: object }} input
- * @returns {string} HTML
- */
-export function itemCard({ boardId, item }) {
-  const rank = isNum(item?.rank) ? `<span class="rank">${item.rank}</span>` : '';
-  const description = typeof item?.description === 'string' && item.description !== ''
-    ? esc(item.description)
-    : '这个项目没有写一句话介绍。';
-  const reasons = Array.isArray(item?.reasons) ? item.reasons.filter((r) => typeof r === 'string' && r !== '') : [];
-  const reasonHtml = reasons.length === 0
-    ? ''
-    : `<ul class="reasons">${reasons.map((reason) => `<li>${esc(reason)}</li>`).join('')}</ul>`;
-  const full = typeof item?.ownerRepo === 'string' ? item.ownerRepo : '';
-  const link = full === '' ? '' : `<a class="project-link" href="https://github.com/${esc(full)}" target="_blank" rel="noreferrer noopener">打开项目主页</a>`;
-
-  return `${rank}<div class="card-body">`
-    + `<h3 class="card-title">${esc(projectName(item))}</h3>`
-    + `<p class="card-desc">${description}</p>`
-    + itemMeta({ boardId, item })
-    + boardScore(boardId, item)
-    + reasonHtml
-    + `<div class="card-actions">${link}<span class="hint">想看怎么装？点开这张卡片。</span></div>`
-    + '</div>';
+    : `在项目目录里运行 ${COLLECT_COMMAND} 就会有一份数据。`;
+  return `<div class="notice notice-empty"><strong>没有读到 ${escapeHtml(day)} 的榜单数据。</strong>${more}</div>`;
 }

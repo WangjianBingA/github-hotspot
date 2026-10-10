@@ -68,10 +68,23 @@ test('每档安装方式都有一句给新手看的中文说法', () => {
   assert.match(kindText('none'), /没有现成的安装方式/);
 });
 
-test('安装方式缺失但分数说有，就不说"没有现成的安装方式"', () => {
-  const rs = buildReasons({ score: { parts: { installPath: 18, chinese: 0 } } });
-  assert.ok(rs.every(r => !r.includes('没有现成的安装方式')));
-  assert.equal(buildReasons({ score: { parts: { installPath: 0 } } }).join(' '), '暂时没有现成的安装方式，得自己动手');
+test('"查过了确实没有"与"没人告诉我们有没有"不能混为一谈', () => {
+  // ① kind 明确是 none：查过了，确实没有安装方式——这句否定句有证据，可以说。
+  const told = buildReasons({ score: { parts: { installPath: 0 } }, runnability: { kind: 'none' } });
+  assert.ok(told.some(r => r.includes('没有现成的安装方式')), 'none 要给出确定的否定句');
+
+  // ② kind 缺失：没人告诉我们，score.mjs 同样记 0 分，但 0 分 ≠ 确定没有，所以一句都不说。
+  const unknown = buildReasons({ score: { parts: { installPath: 0 } } });
+  assert.ok(unknown.every(r => !r.includes('安装')), `不知道就不猜，实际输出：${JSON.stringify(unknown)}`);
+
+  // ③ kind 是没见过的值：同上，不猜。
+  const strange = buildReasons({ score: { parts: { installPath: 0 } }, runnability: { kind: '奇怪的kind' } });
+  assert.ok(strange.every(r => !r.includes('安装')), `未知 kind 也不猜，实际输出：${JSON.stringify(strange)}`);
+
+  // ④ kind 未知但分数说 18 分：知道有路可走，只是不知道是哪一种——给泛化句，不说"没有"。
+  const scored = buildReasons({ score: { parts: { installPath: 18 } } });
+  assert.ok(scored.some(r => r.includes('有现成的安装方式')));
+  assert.ok(scored.every(r => !r.includes('没有现成的安装方式')));
 });
 
 test('中文理由可以由分数推出，不必重复传 chineseDoc', () => {
@@ -111,11 +124,22 @@ test('缺字段、空对象、null 都不抛错，且理由条数与内容都干
   for (const input of [undefined, null, {}, { score: {} }, { score: null, repo: null, velocity: null, runnability: null }]) {
     const rs = buildReasons(input);
     assert.ok(Array.isArray(rs), '永远返回数组');
-    assert.ok(rs.length >= 1 && rs.length <= 5, `条数在 1-5 之间，实际 ${rs.length}`);
+    assert.ok(rs.length <= 5, `条数不超过 5，实际 ${rs.length}`);
+    assert.deepEqual(rs, [], `完全没有证据时不产出任何断言，实际输出：${JSON.stringify(rs)}`);
     assert.ok(rs.every(r => typeof r === 'string' && r.trim() !== ''), '没有空字符串');
     assert.ok(rs.every(r => !/\b(star|fork|issue)s?\b/i.test(r)), '没有行话');
     assert.ok(rs.every(r => !/[a-z]+_[a-z]+/.test(r)), '没有字段名');
   }
+});
+
+test('宁缺毋滥：没有证据就返回空数组，不为凑数编理由', () => {
+  assert.deepEqual(buildReasons(), []);
+  assert.deepEqual(buildReasons({ velocity: { gained7d: 0, confidence: 'measured' } }), []);
+  // 有零散证据时，只写有证据的那几条。
+  assert.deepEqual(
+    buildReasons({ score: { parts: { license: 3 } } }),
+    ['有明确的开源许可证，能放心用'],
+  );
 });
 
 test('理由最多 5 条，宁缺毋滥', () => {

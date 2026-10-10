@@ -32,8 +32,23 @@ const INSTALL_TEXTS = new Map([
   ['none', '暂时没有现成的安装方式，得自己动手'],
 ]);
 
-// kind 认不出来但分数说有安装路径时用这句，不要凭空说"没有现成的安装方式"。
+// kind 认不出来（缺失或未知）但分数说有安装路径时用这句：知道有路可走，只是不知道是哪一种。
 const INSTALL_GENERIC_TEXT = '有现成的安装方式，跟着说明就能装好';
+
+/**
+ * 安装方式的一句话。必须区分"查过了，确实没有"和"没人告诉我们有没有"：
+ * - kind 认识（含 'none'）→ 照表说话，只有 'none' 才是确定性的否定句；
+ * - kind 缺失或未知 → 仅在 installPath > 0 时给泛化句；连分数都没有就什么都不说（返回 ''），
+ *   因为 score.mjs 把未知 kind 也记 0 分，0 分不等于"确定没有安装方式"。
+ * @param {string} [kind] RUNNABLE_POINTS 的键
+ * @param {number} [installPath] 安装路径分（0-18）
+ * @returns {string} 没有证据时为 ''
+ */
+function installText(kind, installPath) {
+  const known = INSTALL_TEXTS.get(kind);
+  if (known) return known;
+  return installPath > 0 ? INSTALL_GENERIC_TEXT : '';
+}
 
 /**
  * 把涨星速度包装成一句给用户看的话，括号里如实标注数据置信度。
@@ -50,14 +65,15 @@ export function formatVelocityText(velocity) {
 }
 
 /**
- * 生成 3-5 条中文上榜理由，按"最想知道的排最前"排序：
+ * 生成中文上榜理由（最多 5 条），按"最想知道的排最前"排序：
  * 本周新增收藏 → 怎么装 → 有没有中文说明 → 作者还管不管这个项目。
- * 缺字段、空对象、null 都不抛错：拿不到的事实就不写，绝不瞎猜。
+ * 缺字段、空对象、null 都不抛错；拿不到的事实就不写，绝不瞎猜——完全没有证据时返回空数组，
+ * 不为了让理由看起来多几条而编造断言（'none' 这种确定性的结论只能来自确定性的输入）。
  * @param {{ score?: { parts?: object }, repo?: object, velocity?: object, runnability?: object }} [input]
  *   score 来自 scoreRepo（用到 parts 里的 installPath、chinese、pushRecency、issueClosure、license），
  *   runnability 形如 { kind, chineseDoc, verified }
  * @param {Date} [now] 显式传入"现在"，用于判断 pushedAt 是不是近 7 天；非 Date 则不看时间
- * @returns {string[]} 1 到 5 条中文短句
+ * @returns {string[]} 0 到 5 条中文短句
  */
 export function buildReasons(input = {}, now = new Date()) {
   const { score, repo, velocity, runnability } = input ?? {};
@@ -72,8 +88,9 @@ export function buildReasons(input = {}, now = new Date()) {
   const growth = formatVelocityText(velocity);
   if (growth) reasons.push(growth);
 
-  // 2. 怎么装：新手最关心"我到底装不装得上"。
-  reasons.push(INSTALL_TEXTS.get(run.kind) ?? (parts.installPath > 0 ? INSTALL_GENERIC_TEXT : INSTALL_TEXTS.get('none')));
+  // 2. 怎么装：新手最关心"我到底装不装得上"。没有证据时不写这一条。
+  const install = installText(run.kind, parts.installPath);
+  if (install) reasons.push(install);
 
   // 3. 有没有中文说明：分数里有中文分就说明有，不必重复传 chineseDoc。
   if (run.chineseDoc === true || parts.chinese > 0) {

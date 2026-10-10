@@ -791,8 +791,8 @@ git commit -m "feat(sources): 新项目/活跃老项目/总榜三个发现器"
 **Interfaces:**
 - Consumes: `client.getJson(url, { api: 'none' })`
 - Produces:
-  - `lookupNpm(client, packageName, repoFullName): Promise<NpmInfo|null>`，`NpmInfo = { packageName, version, hasBin, osIncludesWin, repoMatches }`
-  - `lookupPyPI(client, packageName): Promise<PyPIInfo|null>`，`PyPIInfo = { packageName, version, requiresPython }`
+  - `lookupNpm(client, packageName, repoFullName): Promise<NpmInfo|null>`，`NpmInfo = { packageName, version, hasBin, osIncludesWin, repoMatches, evidence }`（`evidence` 由 R42 增加：`'repository' | 'bugs.url' | 'homepage' | 'none'`）
+  - `lookupPyPI(client, packageName, repoFullName): Promise<PyPIInfo|null>`，`PyPIInfo = { packageName, version, requiresPython, repoMatches, evidence }`（**Task 10B / R68**：第三个参数与 `repoMatches`/`evidence` 为后补；归属只取自 PyPI 自己声明的 `info.project_urls`（键名排序后遍历）> `info.home_page`，经 `normalizeRepoUrl` 归一化后与目标 `owner/repo` **严格相等**，**包名绝不参与判定**。此前 PyPI 侧没有归属字段，会在只知道包名时就发出 `pip install`——即 npm 侧花大力气防住的"信包名"错误换了个生态。）
   - `normalizeRepoUrl(url): string`
   - `isPythonCompatible(requiresPython, localPython): boolean`
 

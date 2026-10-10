@@ -56,13 +56,21 @@ const read = (p) => readFileSync(new URL(`../public/${p}`, import.meta.url), 'ut
  * 一起删，删除范围还会溢出到后面的行）。后果不是"多删了点注释"，而是**让诚实断言空转成永久绿**：
  * 扫不到的东西当然不违规。
  *
- * R110（真实缺陷，已修）：第二版处理好了字符串，却没处理**正则字面量**：
+ * R110 / R117（真实缺陷，分两轮修）：第二版处理好了字符串，却没处理**正则字面量**：
  *   · `/[//]/` 里的两个斜杠被当成注释开头，这一行剩下的代码全没了；
  *   · `/[']/` 里那个引号**颠倒了引号配对**，于是后面字符串里的两个斜杠又变成"注释"。
- * 现在扫描器多了一层判断：`/` 前面如果是"值"（标识符、数字、`)`、`]`、反引号收尾）就是除号，
- * 否则就是正则字面量；进了正则就一直抄到未转义的 `/`，里面的引号与斜杠都不参与外层状态机。
+ * 第三版加了正则识别，但**判定排在"吃注释"之后**——于是评审用 38 个对抗性探针找出 8 种仍然删代码的形状，
+ * 因为 `//` 与 `/*` 在判定之前就已经被吃掉了：
+ *   · `if (ok) return /[//]/; …`、`throw /[//]/; …`、`case /[//]/: …` → 停在 `/[`；
+ *   · `function f(x){ if (x) return /[/*]/; }` → 一路删到文件末尾；
+ *   · `const n = (a + b) / 2; …` 里的除号被误判成正则（`)` 之后其实是除号）。
+ * 现在（第四版）**先分类、再决定要不要当注释**：
+ *   · `/` 前面是"值"（标识符、数字、字符串 / 模板 / 正则收尾、`)`、`]`）→ 除号，原样抄出去；
+ *   · 否则 → 正则字面量开头，一路抄到未转义的 `/`（`[...]` 字符类里的斜杠不算结束），
+ *     期间**不解释引号与 `//`**；
+ *   · 只有确认"不是正则开头"之后，`//` 与 `/*` 才按注释处理。
  *
- * 现在它是**按引号配对扫描** + **模式栈** + **正则字面量识别**：
+ * 现在它是**按引号配对扫描** + **模式栈** + **先分词再判注释**：
  *   · 单引号 / 双引号串：跳到配对的引号；
  *   · 模板串：内容原样抄出来，只有 `${…}` 里才当代码继续解析，`}` 之后又回到模板串
  *     （模板串里可以再套模板串，一个 quote 变量记不住）；
@@ -72,6 +80,11 @@ const read = (p) => readFileSync(new URL(`../public/${p}`, import.meta.url), 'ut
  *     也绝不能用"看不见的字符"来躲开它（例如在星号与斜杠之间塞一个零宽空格）——
  *     那种写法一旦被编辑器做一次空白规范化就会现出原形、整个文件立刻语法错。
  *     注释与字符串里也不许出现零宽字符，那条由后面的断言钉住。
+ *
+ * 已知边界（写清楚，免得下一个人以为它是完整词法分析器）：`/` 是除号还是正则，靠"上一个 token 是不是值"判断；
+ * 遇到刻意刁钻的写法（例如 `case /x/:` 之外的边缘组合）可能判错。判错的两个方向后果不同：
+ * 把正则判成除号只会**多留**内容；把除号判成正则则可能少吃一段。所以断言这一侧还加了
+ * "代码段可重建"与"哨兵"两道保险（见 R110 / R117 用例）。
  * @param {string} source 源码
  * @returns {string} 去掉注释（保留字符串、模板串、正则字面量内容）的源码
  */
@@ -82,22 +95,16 @@ function stripComments(source) {
   // 模式栈：'code' 表示按代码解析；'template' 表示在模板串内容里（只有 `${` 会切回代码）。
   const stack = ['code'];
 
-  // `/` 到底是不是正则的开头，只看它前面那个"有意义"的字符：
-  // 这些字符后面一定是一个表达式，所以 `/` 是正则；其余（标识符、数字、`)`、`]`、引号收尾）后面
-  // 的 `/` 是除号。宁可把除号误判成正则，也不能把正则误判成注释——后者会真的删掉代码。
-  // 最前面先补一个换行：`pendingRegex` 的初始值是 true，等于"文件开头可以出现正则/注释"。
-  out = '\n';
-  let pendingRegex = true;
-  const lastSignificant = () => {
-    for (let n = out.length - 1; n >= 0; n -= 1) {
-      if (!/\s/.test(out[n])) return out[n];
-    }
-    return null;
-  };
-  const slashStartsRegex = () => {
-    const previous = lastSignificant();
-    return pendingRegex || previous === null || '(,=:[!&|?{};+-*%^<>~'.includes(previous);
-  };
+  // "上一个 token 是不是一个值"：是值 → 后面的 `/` 是除号；不是值 → 后面的 `/` 可能是正则开头。
+  // 这一位**必须在处理注释之前**就定下来（R117 的根因就是顺序反了）。
+  let afterValue = false;
+  const VALUE_CHARS = ')]';
+  // 这些词自己不是值，而且它们后面**期待一个表达式**——所以 `return /[//]/`、`case /x/:` 里的斜杠是正则。
+  // 反过来，`true` / `false` / `null` / `this` / `super` 是值，`x / y` 里的斜杠才是除号。
+  const KEYWORDS_EXPECTING_EXPRESSION = new Set([
+    'return', 'throw', 'case', 'typeof', 'void', 'delete', 'instanceof', 'in', 'of',
+    'new', 'do', 'else', 'yield', 'await',
+  ]);
 
   /** 整段抄出来（字符串 / 模板串 / 正则字面量的内容都不许动）。 */
   const copy = (count) => {
@@ -105,7 +112,7 @@ function stripComments(source) {
     i += count;
   };
 
-  /** 跳过注释（连同空白），只把**真实的换行**抄进输出，让行号还能对上。 */
+  /** 跳过注释与换行，只把**真实的换行**抄进输出，让行号还能对上。调用方必须先确认不是正则开头。 */
   const skipTrivia = () => {
     let moved = false;
     while (i < text.length) {
@@ -127,10 +134,7 @@ function stripComments(source) {
         continue;
       }
       if (ch === '\n') { out += '\n'; i += 1; moved = true; continue; }
-      // 空格与制表符**到这里就停**：接着交给主循环原样抄出去。
-      // 删掉它们会把 `const re` 粘成 `constre`（只是不好看），但更糟的是正则判断靠的是
-      // "上一个有意义的字符"，而真正决定它的是**循环开头那一次 skipTrivia**：
-      // 空白的处理放在这里就说不清"到底跳没跳过"，会漏判 `/` 是正则还是除号。
+      // 空格与制表符**到这里就停**：接着交给主循环原样抄出去（删掉它们会把 `const re` 粘成 `constre`）。
       break;
     }
     return moved;
@@ -147,49 +151,69 @@ function stripComments(source) {
     }
   };
 
+  /** 正则字面量：`/` 起、未转义的 `/` 止（`[...]` 里的斜杠不算结束），后面跟标志字母。 */
+  const readRegex = () => {
+    copy(1);
+    let inClass = false;
+    while (i < text.length) {
+      const ch = text[i];
+      if (ch === '\\') { copy(2); continue; }
+      if (ch === '\n') return; // 形状坏了：不硬啃，交给后面的字符按普通字符处理
+      if (ch === '[') inClass = true;
+      else if (ch === ']') inClass = false;
+      else if (ch === '/' && !inClass) {
+        copy(1);
+        while (i < text.length && /[a-z]/i.test(text[i])) copy(1);
+        return;
+      }
+      copy(1);
+    }
+  };
+
   while (i < text.length) {
+    // 模板串内容：只有 `${` 才切回代码，其余（含引号与斜杠）原样抄。
     if (stack[stack.length - 1] === 'template') {
       const ch = text[i];
       if (ch === '\\') { copy(2); continue; }
-      if (ch === '`') { copy(1); stack.pop(); pendingRegex = false; continue; }
-      if (ch === '$' && text[i + 1] === '{') { copy(2); stack.push('code'); pendingRegex = true; continue; }
+      if (ch === '`') { copy(1); stack.pop(); afterValue = true; continue; }
+      if (ch === '$' && text[i + 1] === '{') { copy(2); stack.push('code'); afterValue = false; continue; }
       copy(1);
       continue;
     }
 
-    if (skipTrivia()) { pendingRegex = slashStartsRegex(); }
-
-    if (i >= text.length) break;
+    // 注释与换行只可能在"不是正则开头"的位置出现，所以先把 `/` 的正则判定放在前面。
     const ch = text[i];
-    if (/\s/.test(ch)) { copy(1); continue; }
-    if (ch === "'" || ch === '"') { readQuoted(ch); pendingRegex = false; continue; }
-    if (ch === '`') { copy(1); stack.push('template'); pendingRegex = false; continue; }
-    if (ch === '/') {
-      if (slashStartsRegex()) {
-        // 正则字面量：`/` 起、未转义的 `/` 止，后面可能还有 gimsuy 这些标志字母。
-        copy(1);
-        let inClass = false;
-        while (i < text.length) {
-          const cur = text[i];
-          if (cur === '\\') { copy(2); continue; }
-          if (cur === '\n') break;
-          if (cur === '[') inClass = true;
-          else if (cur === ']') inClass = false;
-          else if (cur === '/' && !inClass) { copy(1); while (i < text.length && /[a-z]/i.test(text[i])) copy(1); break; }
-          copy(1);
-        }
-        pendingRegex = false;
-        continue;
-      }
-      copy(1);
-      pendingRegex = true;
+    const maybeRegex = ch === '/' && text[i + 1] !== '/' && text[i + 1] !== '*' && !afterValue;
+    if (maybeRegex) {
+      readRegex();
+      afterValue = true;
       continue;
     }
-    if (ch === '}' && stack.length > 1) { copy(1); stack.pop(); continue; }
-    if (')]'.includes(ch)) { copy(1); pendingRegex = true; continue; }
-    if (ch === '{' || ch === ';' || ch === ',') { copy(1); pendingRegex = true; continue; }
+    skipTrivia();
+    if (i >= text.length) break;
+
+    const cur = text[i];
+    if (cur === '/') {
+      // 走到这里说明：`//` 或 `/*` 是注释（已被 skipTrivia 吃掉），或者这是一个除号。
+      copy(1);
+      afterValue = false; // 除号是运算符，后面要跟一个值
+      continue;
+    }
+    if (/\s/.test(cur)) { copy(1); continue; }
+    if (cur === "'" || cur === '"') { readQuoted(cur); afterValue = true; continue; }
+    if (cur === '`') { copy(1); stack.push('template'); afterValue = true; continue; }
+    if (cur === '}' && stack.length > 1) { copy(1); stack.pop(); continue; }
+    if (VALUE_CHARS.includes(cur)) { copy(1); afterValue = true; continue; }
+    if (/[A-Za-z0-9_$]/.test(cur)) {
+      // 标识符 / 数字：整体抄出去。它是"值"（`1 / 2`、`a / b` 里的斜杠是除号），
+      // 但 `return` 这类"后面要跟表达式"的关键词不是值（`return /re/` 里的斜杠是正则开头）。
+      const start = i;
+      while (i < text.length && /[A-Za-z0-9_$]/.test(text[i])) copy(1);
+      afterValue = !KEYWORDS_EXPECTING_EXPRESSION.has(text.slice(start, i));
+      continue;
+    }
     copy(1);
-    pendingRegex = false;
+    afterValue = false;
   }
   // 开头补的那个换行去掉，让输出与输入的第一行对得上。
   return out.replace(/^\n/, '');
@@ -783,23 +807,51 @@ test('R111：经典榜的卡片与提示不许承诺"为什么上榜"', () => {
   assert.ok(!classicDrawer.includes('为什么上榜'));
 });
 
-test('R111：没有安装向导的项目，卡片与提示不许承诺"三步"', () => {
-  const noGuide = item({ grade: 'red' }); // 没有 install 字段
-  const withoutGuide = itemCard({ boardId: 'weekly', item: noGuide });
-  assert.ok(!withoutGuide.includes('怎么装'), '没有向导就不能承诺"怎么装"');
-  assert.match(withoutGuide, /为什么上榜/);
+test('R111：没有安装向导的项目，卡片与提示不许承诺"三步"（R118：稀疏条目也不许多承诺小节）', () => {
+  // 完全没有 install 字段、也没有分数与理由的稀疏条目：抽屉里只有"怎么装"那一节（指路话）、
+  // 项目全名、一句话介绍与增长速度，**既没有"为什么上榜"也没有事实表**。
+  const sparse = item({ grade: 'red' });
+  const sparseCard = itemCard({ boardId: 'weekly', item: sparse });
+  assert.ok(!sparseCard.includes('怎么装'), '没有向导就不能承诺"怎么装"');
+  assert.ok(!sparseCard.includes('为什么上榜'), '没有分数与理由时抽屉里没有"为什么上榜"，卡片就不许承诺');
+  assert.ok(!sparseCard.includes('项目基本事实'), '事实表为空时卡片也不许承诺它');
+  assert.match(sparseCard, /点开看这一条的详情/);
+  // 抽屉与卡片对得上：这个条目的抽屉里确实没有这两节。
+  const sparseDrawer = detailDrawer({ boardId: 'weekly', item: sparse });
+  assert.ok(!sparseDrawer.includes('为什么上榜'));
+  assert.ok(!sparseDrawer.includes('项目基本事实'));
+
+  // 有分数与理由时（事实表仍然为空：没有语言/收藏/时间/许可证），才承诺"为什么上榜"。
+  const withScores = item({ grade: 'red', scores: { total: 80, hot: 40 }, reasons: ['大家都说好用'] });
+  const scoredCard = itemCard({ boardId: 'weekly', item: withScores });
+  assert.match(scoredCard, /为什么上榜/);
+  assert.ok(!scoredCard.includes('项目基本事实'));
 
   // 有向导时才说"怎么装"。
   const withGuide = itemCard({ boardId: 'weekly', item: drawerItem({ scores: { total: 80 } }) });
   assert.match(withGuide, /怎么装/);
 
-  // 列表上方的说明同样按"这一榜有没有向导"分：这一榜一条向导都没有时，不能说"拆成三步"。
+  // 坏形状（steps 里全是 null）不算有向导——卡片与抽屉必须同源（R118）。
+  const brokenShape = item({ install: { steps: [null], faq: [] } });
+  const brokenCard = itemCard({ boardId: 'weekly', item: brokenShape });
+  assert.ok(!brokenCard.includes('怎么装'), 'steps 里没有对象时不算有向导，卡片不许承诺');
+  assert.equal(detailDrawer({ boardId: 'weekly', item: brokenShape }).includes('install-steps'), false);
+
+  // 列表上方的说明同样按"这一榜有没有真的向导"分：一条都没有时不能说"拆成三步"。
   const noGuideHint = hintsOf('weekly');
   assert.ok(!noGuideHint.includes('拆成三步'), '一条向导都没有时不许承诺三步');
-  const withGuideHint = buildBoardView({ items: [drawerItem({ install: installGuide() })], boardId: 'weekly', daily: daily() })
-    .hints.map((h) => h.html).join('\n');
-  assert.match(withGuideHint, /拆成三步/);
-  assert.match(withGuideHint, /prepare\.html/);
+  assert.match(noGuideHint, /没有带现成安装步骤的项目/);
+  // 混合榜（一条有向导、一条没有）：榜级文案只能说"有现成安装步骤的项目会……"，不能对整榜打包票。
+  // 这里禁的是老写法——把「怎么装」拆成三步**直接放在句首**（那句话等于说整榜每一条都有三步）。
+  const mixedHint = buildBoardView({
+    items: [drawerItem({ install: installGuide() }), item({ ownerRepo: 'c/three', name: 'three', rank: 3 })],
+    boardId: 'weekly',
+    daily: daily(),
+  }).hints.map((h) => h.html).join('\n');
+  assert.match(mixedHint, /有现成安装步骤的项目会把「怎么装」拆成三步/);
+  // 老写法是"把「怎么装」拆成三步"直接跟在"打开详情："后面（= 对每一条打包票）。
+  assert.ok(!mixedHint.includes('打开详情：把「怎么装」拆成三步'), '整榜不许对每一条打包票');
+  assert.match(mixedHint, /prepare\.html/);
 });
 
 test('R112：没有项目主页链接时，那句指路话不许让人"打开下面的链接"', () => {
@@ -1198,6 +1250,72 @@ test('R106：去注释助手不得删掉字符串里的真代码', () => {
   assert.ok(!codeOnly.includes('replace(/\\/\\*'), '还有用例在用会被字符串骗倒的行内正则');
 });
 
+test('R117：正则判定必须排在"吃注释"之前（评审给的对抗性形状逐条钉住）', () => {
+  // 评审实测仍然删代码的 5 种形状（第三版停在 `/[`，第五种还把除号当成了正则）。
+  const probes = [
+    'if (ok) return /[//]/; const keep = 4; // tail',
+    'throw /[//]/; const keep = 5;',
+    'switch (v) { case /[//]/: break; } const keep = 6;',
+    'function f(x){ if (x) return /[/*]/; }\nconst tailMarker = 2;',
+    "const n = (a + b) / 2; const u = '///'; const keep = 1; // tail",
+  ];
+  for (const probe of probes) {
+    const stripped = stripComments(probe);
+    // ① 尾部代码必须还在（第三版正是在这里断掉）。
+    assert.ok(stripped.includes('const keep') || stripped.includes('const tailMarker'), `删到后面去了：${stripped}`);
+    assert.ok(!stripped.includes('// tail'), '行尾注释要删掉');
+  }
+  // ② 逐字确认这几条：正则里的 `//` 不是注释、正则字符类里的引号不参与配对、`)` 后面是除号。
+  assert.equal(stripComments('if (ok) return /[//]/; // tail'), 'if (ok) return /[//]/; ');
+  assert.equal(stripComments('throw /[//]/;'), 'throw /[//]/;');
+  assert.equal(stripComments('switch (v) { case /[//]/: break; }'), 'switch (v) { case /[//]/: break; }');
+  assert.equal(stripComments('const n = (a + b) / 2;'), 'const n = (a + b) / 2;');
+  assert.equal(stripComments('const x = a / b / c; // d'), 'const x = a / b / c; ');
+  // ③ `return` / `case` / `(` / `,` / `=` 后面的 `/` 都按正则处理（这些位置不可能是除号）。
+  assert.equal(stripComments('return /x/; // c'), 'return /x/; ');
+  assert.equal(stripComments('const a = /x/, b = /y/; // c'), 'const a = /x/, b = /y/; ');
+  assert.equal(stripComments('f(/,/, /[)]/); // c'), 'f(/,/, /[)]/); ');
+  assert.equal(stripComments('const t = `a ${b / 2} https://c`; // d'), 'const t = `a ${b / 2} https://c`; ');
+});
+
+test('R117：真实文件剥离注释之后仍是合法 JS，且代码段可以逐字重建', () => {
+  // 这是"删代码"的**结构性**判据：把输出按原文顺序拼回代码段，只要多删/少删就重建不出来。
+  // 上一轮的哨兵断言对"删掉一整行"是哑的（评审实测注入一行删掉后哨兵一个不少），
+  // 这两条一起才真的把"删代码"这一侧盖住。
+  const rebuild = (source, stripped) => {
+    let index = 0;
+    const pieces = [];
+    for (const rawLine of stripped.split('\n')) {
+      const segment = rawLine.trim();
+      if (segment === '') continue;
+      const at = source.indexOf(segment, index);
+      if (at === -1) return { ok: false, missing: segment.slice(0, 60) };
+      pieces.push(segment);
+      index = at + segment.length;
+    }
+    return { ok: true, joined: pieces.join('\n') };
+  };
+
+  for (const [name, source] of Object.entries({
+    'render.mjs': read('render.mjs'),
+    'app.js': read('app.js'),
+    'page-content.test.mjs': readFileSync(new URL('./page-content.test.mjs', import.meta.url), 'utf8'),
+  })) {
+    const stripped = stripComments(source);
+    const rebuilt = rebuild(source, stripped);
+    const expected = stripped.split('\n').map((line) => line.trim()).filter((line) => line !== '').join('\n');
+    assert.ok(rebuilt.ok, `${name} 剥离后的某一段在原文里找不到：${rebuilt.missing}`);
+    assert.equal(rebuilt.joined, expected,
+      `${name} 的输出无法按原文顺序逐段重建（说明有代码被删或被改写）`);
+    // 合理比例：注释与空白去掉之后，剩下的代码不该缩水到一半以下（上一版的坏形状会缩到几十分之一）。
+    assert.ok(stripped.length > source.length * 0.4, `${name} 剥离后长度只剩 ${stripped.length}/${source.length}`);
+    // 真实文件的最后一段代码必须还在（"删到 EOF"这种灾难性删除会被这一条抓住）。
+    const lastLine = source.split('\n').map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('//') && !line.startsWith('*') && !line.startsWith('/*')).pop();
+    assert.ok(stripped.includes(lastLine), `${name} 的最后一段代码（${lastLine.slice(0, 40)}）被删掉了`);
+  }
+});
+
 test('R110：去注释助手不得把正则字面量当成注释（也不许颠倒引号配对）', () => {
   // ① 正则字符类里的两个斜杠：以前被当成行注释的开头，这一行剩下的代码全没了。
   const slashInClass = 'const re = /[//]/; const keep = 1; // tail';
@@ -1213,13 +1331,18 @@ test('R110：去注释助手不得把正则字面量当成注释（也不许颠�
   // ④ 转义过的斜杠、正则后面的标志字母、以及"行首就是正则"的写法。
   assert.equal(stripComments('const re = /a\\/b/g; // 注释'), 'const re = /a\\/b/g; ');
   assert.equal(stripComments('/^x$/.test(y); // 注释'), '/^x$/.test(y); ');
-  // ⑤ 块注释照旧删掉（并且不破坏后面的代码）。
-  assert.equal(stripComments('/* 块注释\n   第二行 */\nconst after = 1;'), '\n\nconst after = 1;');
+  // ⑤ 块注释照旧删掉（只保留注释里**真实的**换行，让行号还能对上；不给它另外补空行）。
+  assert.equal(stripComments('/* 块注释\n   第二行 */\nconst after = 1;'), '\nconst after = 1;');
+  // ⑥ 行注释在字符串 / 模板串 / 正则"后面"照常删（正则判定不能把注释也当成正则）。
+  assert.equal(stripComments("const s = 'a'; // 注释"), "const s = 'a'; ");
+  assert.equal(stripComments('const t = `a`; // 注释'), 'const t = `a`; ');
+  assert.equal(stripComments('const re = /x/; // 注释'), 'const re = /x/; ');
 
-  // ⑥ 保险丝：对**每个会被扫描的文件**，去注释之后必须还包含这些"必须活着"的串。
+  // ⑦ 保险丝：对**每个会被扫描的文件**，去注释之后必须还包含这些"必须活着"的串。
   //    哨兵的作用是——将来出现某种新形状又把代码删掉时，测试会因为**缺哨兵**而失败，
-  //    而不是让诚实断言静默通过（这正是 R106 / R110 两次踩到的同一个坑）。
-  //    每个文件的哨兵**按它自己真的含有哪些串**来列（强塞一个它本来就没有的串，只会得到一条假红）。
+  //    而不是让诚实断言静默通过（这正是 R106 / R110 / R117 三次踩到的同一个坑）。
+  //    注意：哨兵对"删掉一整行"是哑的（评审实测过），所以**不能只靠它**——
+  //    "代码段可逐字重建"那条 R117 用例才是真正盖住"删代码"的判据。
   const sentinelsByFile = {
     'render.mjs': ['escapeHtml', 'escapeAttr', 'https://github.com', 'noreferrer noopener', 'cardDetailEntry'],
     'app.js': ['escapeHtml', 'escapeAttr', 'detailDrawer', 'innerHTML', 'addEventListener'],

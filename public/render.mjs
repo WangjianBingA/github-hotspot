@@ -118,59 +118,99 @@ const DRAWER_TITLES = {
 };
 
 /**
- * 卡片上那句"这里可以点开"的入口说明。
- *
- * R105 / R111：这句话**必须与抽屉里真有的东西一致**。它曾经是一句固定文案，
- * 无条件承诺「怎么装、为什么上榜」，可是经典榜的抽屉里根本没有"为什么上榜"（它不参与三轴评分，R25），
- * 而没有预生成向导的项目渲染的是"去项目主页看"那句指路。所以改成按榜单与向导有无来给：
- *   · 经典榜：只说"它凭什么在这个榜里"（那一节真的在）；
- *   · 有向导的榜：说"怎么装"；
- *   · 没有向导的榜：只说"为什么上榜"与"项目基本事实"（向导那节渲染的是一句指路话，不是三步）。
- * @param {string} boardId 榜单 id
- * @param {boolean} hasGuide 这条数据里有没有真的渲染得出来的安装向导
- * @returns {string}
+ * 一条 install 数据里**真的会被渲染出来**的步骤与常见问题（R78 的判据本体）。
+ * 两处都用它，所以"卡片承诺了什么"与"抽屉渲染了什么"不可能再分家（R111 / R118）：
+ * 这里只把对象留下，`{ steps: [null] }` 这种坏形状不算"有向导"。
+ * @param {object} [install] 条目里的 install 字段
+ * @returns {{ steps: object[], faq: object[] }}
  */
-const cardDetailEntry = (boardId, hasGuide) => {
-  const parts = [];
-  if (boardId === CLASSIC_ID) {
-    parts.push('它凭什么在这个榜里');
-  } else {
-    if (hasGuide) parts.push('怎么装');
-    parts.push('为什么上榜');
-  }
-  parts.push('项目基本事实');
-  return `点开看详情（${parts.join('、')}）`;
-};
+function guideParts(install) {
+  const guide = install && typeof install === 'object' ? install : {};
+  return {
+    steps: asArray(guide.steps).filter((step) => step && typeof step === 'object'),
+    faq: asArray(guide.faq).filter((entry) => entry && typeof entry === 'object'),
+  };
+}
 
 /**
- * 列表上方那句说明的几种说法（同样只承诺抽屉里真有的东西）。
- * @param {string} boardId 榜单 id
- * @param {boolean} hasGuide 这条数据里有没有真的渲染得出来的安装向导
- * @returns {string} HTML 片段（纯文本 + 一个链接）
- */
-const cardDetailHintText = (boardId, hasGuide) => {
-  const tail = '看不懂的地方，先看<a href="prepare.html">新手准备页</a>，从头照着做一遍。';
-  if (boardId === CLASSIC_ID) {
-    return '点开卡片会打开详情：这个榜按总收藏人数排，所以详情里说的是「它凭什么在这个榜里」、'
-      + '项目基本事实，以及一句话介绍。' + tail;
-  }
-  const front = hasGuide
-    ? '点开卡片会打开详情：把「怎么装」拆成三步，每一步做什么都写清楚了。'
-    : '点开卡片会打开详情：为什么上榜、项目基本事实、一句话介绍。'
-      + '这个项目没有现成的安装步骤，我们会指路到它自己的主页。';
-  return front + tail;
-};
-/**
- * 这条数据里有没有"真的渲染得出来"的安装向导（R78）。
- * 判据与 installGuideHtml 完全一致（有步骤或有常见问题就算有），
- * 这样"卡片上承诺了三步"与"抽屉里真的有步骤"不会各说各话（R111）。
+ * 这一条到底会不会渲染出安装向导（与 installGuideHtml 的第一道判断完全同源）。
  * @param {object} [install] 条目里的 install 字段
  * @returns {boolean}
  */
 function hasInstallGuide(install) {
-  const guide = install && typeof install === 'object' ? install : {};
-  return asArray(guide.steps).length > 0 || asArray(guide.faq).length > 0;
+  const { steps, faq } = guideParts(install);
+  return steps.length > 0 || faq.length > 0;
 }
+
+/**
+ * 这一条到底会不会渲染出「项目基本事实」那一节（与 detailDrawer 里那道判断同源）。
+ * @param {object} item 条目
+ * @returns {boolean}
+ */
+function hasFactList(item) {
+  return factList(item).length > 0;
+}
+
+/**
+ * 这一条到底会不会渲染出"为什么上榜"那一节（与 whySection 的最后一道判断同源）。
+ * @param {string} boardId 榜单 id
+ * @param {object} item 条目
+ * @returns {boolean}
+ */
+function hasWhySection(boardId, item) {
+  // 经典榜那一节叫「它凭什么在这个榜里」，而它不是按分数排的，所以**永远**会渲染（R25）。
+  if (boardId === CLASSIC_ID) return true;
+  const hasReasons = asArray(item?.reasons).some((reason) => typeof reason === 'string' && reason !== '');
+  const scores = item?.scores;
+  const hasScore = scores !== undefined && scores !== null
+    && (isNum(scores.total) || AXES.some((axis) => isNum(scores[axis.key])));
+  return hasScore || hasReasons;
+}
+
+/**
+ * 卡片上那句"这里可以点开"的入口说明。
+ *
+ * R105 / R111 / R118：这句话**必须与抽屉里真有的东西一致**。它曾经是一句固定文案，
+ * 无条件承诺「怎么装、为什么上榜、项目基本事实」，可是经典榜的抽屉里根本没有"为什么上榜"
+ * （它不参与三轴评分，R25）、没有向导的项目渲染的是"去项目主页看"那句指路、数据稀疏的条目
+ * 连事实表都是空的。所以这里逐节问上面那几个函数，只说抽屉真的会渲染的小节。
+ * @param {string} boardId 榜单 id
+ * @param {object} item 条目
+ * @returns {string}
+ */
+const cardDetailEntry = (boardId, item) => {
+  const parts = [];
+  if (boardId === CLASSIC_ID) {
+    if (hasWhySection(boardId, item)) parts.push(DRAWER_TITLES.classic);
+  } else {
+    if (hasInstallGuide(item?.install)) parts.push('怎么装');
+    if (hasWhySection(boardId, item)) parts.push(DRAWER_TITLES.why);
+  }
+  if (hasFactList(item)) parts.push(DRAWER_TITLES.facts);
+  // 一节都承诺不了（数据太稀疏）时，不硬编一个清单，只说"点开看看"。
+  return parts.length === 0 ? '点开看这一条的详情' : `点开看详情（${parts.join('、')}）`;
+};
+
+/**
+ * 列表上方那句说明的几种说法。
+ * R111 / R118：与抽屉里真有的东西同源；榜级文案只能承诺**这一榜真的有的东西**——
+ * 混合榜（有的条目有向导、有的没有）不能对整榜说"拆成三步"。
+ * @param {string} boardId 榜单 id
+ * @param {boolean} boardHasGuide 这一榜里有没有任何一条带安装向导
+ * @returns {string} HTML 片段（纯文本 + 一个链接）
+ */
+const cardDetailHintText = (boardId, boardHasGuide) => {
+  const tail = '看不懂的地方，先看<a href="prepare.html">新手准备页</a>，从头照着做一遍。';
+  if (boardId === CLASSIC_ID) {
+    return `点开卡片会打开详情：这个榜按总收藏人数排，所以详情里说的是「${DRAWER_TITLES.classic}」、`
+      + '项目基本事实，以及一句话介绍。' + tail;
+  }
+  const front = boardHasGuide
+    ? '点开卡片会打开详情：有现成安装步骤的项目会把「怎么装」拆成三步，每一步做什么都写清楚了。'
+    : '点开卡片会打开详情：为什么上榜、项目基本事实、一句话介绍。'
+      + '这个榜上目前没有带现成安装步骤的项目，所以每一条都会指路到它自己的主页。';
+  return front + tail;
+};
 
 /** 命令框下面那句提示（真实缺陷：以前没说"失败了怎么办"，用户会以为按钮坏了）。 */
 const COPY_HINT = '按钮会把这一行复制到剪贴板；要是没反应，就自己选中这一行，按 Ctrl 加 C。';
@@ -508,9 +548,9 @@ export function itemCard({ boardId, item }) {
     + boardScore(boardId, item)
     + reasonHtml
     // Task 17 起抽屉真的存在了：这里如实说"点开有详情"，不再写"还在做"（写了就是对用户说谎）。
-    // R111：承诺的小节要与这一榜、这一条**实际**会给的东西一致（经典榜没有"为什么上榜"、
-    // 没有向导的项目那节渲染的是指路话）。
-    + `<div class="card-actions">${link}<span class="hint">${escapeHtml(cardDetailEntry(boardId, hasInstallGuide(item?.install)))}</span></div>`
+    // R111 / R118：承诺的小节要与这一条**实际**会给的东西一致——经典榜没有"为什么上榜"、
+    // 没有向导的那种坏形状（例如 steps 里全是 null）不算有向导、事实表为空也不许承诺它。
+    + `<div class="card-actions">${link}<span class="hint">${escapeHtml(cardDetailEntry(boardId, item))}</span></div>`
     + '</div>';
 }
 
@@ -582,8 +622,9 @@ function stepBody(body, command, copyId, withCommand) {
  * @returns {string} HTML；没有向导时是空串
  */
 export function installGuideHtml(guide) {
-  const steps = asArray(guide?.steps).filter((step) => step && typeof step === 'object');
-  const faq = asArray(guide?.faq).filter((entry) => entry && typeof entry === 'object');
+  // 判据走 hasInstallGuide 用的那个 guideParts（R118）：坏形状（例如 `{steps:[null]}`）不算有向导，
+  // 否则卡片会承诺"怎么装"而抽屉里只有一句指路话。
+  const { steps, faq } = guideParts(guide);
   // 命令：优先认 collector 明确标出来的那一条，没有就从第 2 步正文里找（形状变了也不至于不给命令）。
   let command = typeof guide?.command === 'string' ? guide.command.trim() : '';
   if (command === '') {

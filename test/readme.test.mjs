@@ -128,6 +128,31 @@ test('R16：中文文件名、docs/*.zh*、以及其他语言的本地化文件�
   assert.equal(r.hasCjk, true);
 });
 
+test('R63：**只有** docs/guide.zh-CN.md 这一条证据时，单独它就必须判出中文', () => {
+  // 这个用例把 docs/ 分支**隔离**出来：没有 README.zh-CN.md / README_CN.md 兜底，
+  // 一旦 isChineseFile 拿"剥掉目录前缀后的文件名"去匹配要求字面量 docs/ 的正则，就会漏报成 false。
+  const r = detectChinese({ readmeText: 'English only. '.repeat(50), extraFiles: { 'docs/guide.zh-CN.md': '中文内容' } });
+  assert.deepEqual(r.localizedFiles, ['docs/guide.zh-CN.md']);
+  assert.equal(r.hasChinese, true);
+  assert.equal(r.hasCjk, true);
+  assert.equal(r.ratio, 0);      // 正文一个汉字都没有，中文结论只能来自那条 docs 证据
+  assert.equal(r.kanaRatio, 0);
+});
+
+test('R63：docs/guide.zh-TW.md 单独作为证据时同样判出中文', () => {
+  const r = detectChinese({ readmeText: 'English only. '.repeat(50), extraFiles: { 'docs/guide.zh-TW.md': '繁體中文內容' } });
+  assert.deepEqual(r.localizedFiles, ['docs/guide.zh-TW.md']);
+  assert.equal(r.hasChinese, true);
+  assert.equal(r.hasCjk, true);
+});
+
+test('R63：docs/ 里的非中文文档不算中文（isolated 反向用例，防"整个 docs/ 都算中文"）', () => {
+  const r = detectChinese({ readmeText: 'English only. '.repeat(50), extraFiles: { 'docs/setup.ko.md': '한국어', 'docs/guide.ja.md': '日本語' } });
+  assert.deepEqual(r.localizedFiles, ['docs/guide.ja.md', 'docs/setup.ko.md']);
+  assert.equal(r.hasChinese, false);
+  assert.equal(r.hasCjk, true);
+});
+
 test('本地化文件值为空串或 null 时不算证据（"探到了但没内容"不是文档）', () => {
   const r = detectChinese({ readmeText: 'English only. '.repeat(20), extraFiles: { 'README.zh-CN.md': null, 'README.ja.md': '', 'README.md': '正文' } });
   // 裸 README.md 是主文档本身，不是"又一份本地化文档"；键存在但值为空的也一律不算证据。

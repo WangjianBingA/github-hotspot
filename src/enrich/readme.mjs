@@ -64,6 +64,10 @@ const BARE_README_RE = /^readme\.(md|markdown)$/i;
  * 纯中文正文里的假名只可能是零星外来语拼写（如"ソフト"），远低于 1%；
  * 而日语正文的假名占比实测在 30% 以上（本模块的日语用例是 44%）。
  * 1% 这条线离两侧各有两个数量级的余量，不会踩到边界上。
+ *
+ * 为什么它留在本模块而不放进 config/weights.mjs：weights.mjs 是**分值与非此即彼的口径阈值**的唯一出处
+ * （分值、榜单条数、打分判定线）。这是一个"这条检测启发式多严"的调参旋钮，不是分值、也不是 spec 定的口径，
+ * 换掉它不会改变任何一分怎么算 —— 所以它跟字符类一起留在检测层，改它只需看这一个文件。
  */
 const KANA_RATIO_BOUND = 0.01;
 
@@ -87,7 +91,9 @@ const isChineseFile = (name) => {
   const base = prefix === '' ? name : name.slice(prefix.length);
   // 子目录里的裸 README.md 不算中文证据（目录名是中文也不行），中文文档必须由文件名里的语言代号证明。
   if (prefix !== '' && BARE_README_RE.test(base)) return false;
-  return README_CHINESE_RE.test(base) || DOC_CHINESE_RE.test(base);
+  // R63：两个正则各自匹配它真正要匹配的对象 —— README 分支匹配**文件名**，docs 分支必须匹配**完整路径**。
+  // DOC_CHINESE_RE 里的 `docs/` 是字面量，喂给它剥掉前缀的 base 永远匹配不上（那是一段死代码）。
+  return README_CHINESE_RE.test(base) || DOC_CHINESE_RE.test(name);
 };
 
 /**

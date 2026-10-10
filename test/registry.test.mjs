@@ -286,36 +286,167 @@ test('packument 结构不对、响应体为 null 或抛错时返回 null，绝�
 // ---------- PyPI ----------
 
 test('lookupPyPI 读出最新版本与 requires_python，并按 PEP 503 归一化包名', async () => {
-  const spy = spying({ info:{ name:'MarkItDown', version:'0.1.8', requires_python:'<3.15,>=3.10' } });
-  const r = await lookupPyPI(spy, 'MarkItDown');
+  // 实测形状（pypi.org/pypi/markitdown/json，0.1.8）：project_urls 的键是 Documentation / Issues / Source，
+  // home_page 为 null；Documentation 带 #readme 尾巴也照样归一化到同一个仓库。
+  const spy = spying({ info:{ name:'MarkItDown', version:'0.1.8', requires_python:'<3.15,>=3.10',
+    project_urls:{ Documentation:'https://github.com/microsoft/markitdown#readme',
+      Issues:'https://github.com/microsoft/markitdown/issues',
+      Source:'https://github.com/microsoft/markitdown' } } });
+  const r = await lookupPyPI(spy, 'MarkItDown', 'microsoft/markitdown');
   assert.deepEqual(spy.calls, [{ url:'https://pypi.org/pypi/markitdown/json', options:{ api:'none' } }]);
-  assert.deepEqual(r, { packageName:'MarkItDown', version:'0.1.8', requiresPython:'<3.15,>=3.10' });
+  assert.deepEqual(r, { packageName:'MarkItDown', version:'0.1.8', requiresPython:'<3.15,>=3.10',
+    repoMatches:true, evidence:'project_urls' });
 });
 
 test('PyPI 包名的下划线、点、大小写都被归一化成连字符', async () => {
   // PEP 503：-/_/. 可互换。不同写法必须请求到同一个包，不能因为写法不同就查不到。
   for (const [input, expected] of [['my_package', 'my-package'], ['My.Package', 'my-package'], ['MY__PACKAGE', 'my-package'], ['my-package', 'my-package']]) {
     const spy = spying({ info:{ name:'my-package', version:'1.0.0' } });
-    await lookupPyPI(spy, input);
+    await lookupPyPI(spy, input, 'my-org/my-package');
     assert.equal(spy.calls[0].url, `https://pypi.org/pypi/${expected}/json`, `输入：${input}`);
   }
 });
 
 test('缺少 requires_python 时 requiresPython 为 null，并视为兼容', async () => {
   const spy = spying({ info:{ name:'markitdown', version:'0.1.8' } });
-  const r = await lookupPyPI(spy, 'markitdown');
+  const r = await lookupPyPI(spy, 'markitdown', 'microsoft/markitdown');
   assert.equal(r.requiresPython, null);
   assert.equal(isPythonCompatible(r.requiresPython, '3.10.11'), true);
 });
 
 test('PyPI 请求失败、结构不对或包名为空时返回 null，绝不抛错', async () => {
-  assert.equal(await lookupPyPI({ getJson: async () => null }, 'x'), null);
-  assert.equal(await lookupPyPI({ getJson: async () => { throw new Error('网络超时'); } }, 'x'), null);
-  assert.equal(await lookupPyPI(client({}), 'x'), null);
-  assert.equal(await lookupPyPI(client({ info:{} }), 'x'), null);
-  assert.equal(await lookupPyPI(client({ info:{ name:'x', version:'' } }), 'x'), null);
-  assert.equal(await lookupPyPI(client({ info:{ name:'x', version:'1.0.0' } }), ''), null);
-  assert.equal(await lookupPyPI(undefined, 'x'), null);
+  assert.equal(await lookupPyPI({ getJson: async () => null }, 'x', 'a/b'), null);
+  assert.equal(await lookupPyPI({ getJson: async () => { throw new Error('网络超时'); } }, 'x', 'a/b'), null);
+  assert.equal(await lookupPyPI(client({}), 'x', 'a/b'), null);
+  assert.equal(await lookupPyPI(client({ info:{} }), 'x', 'a/b'), null);
+  assert.equal(await lookupPyPI(client({ info:{ name:'x', version:'' } }), 'x', 'a/b'), null);
+  assert.equal(await lookupPyPI(client({ info:{ name:'x', version:'1.0.0' } }), '', 'a/b'), null);
+  assert.equal(await lookupPyPI(undefined, 'x', 'a/b'), null);
+});
+
+// ---------- Task 10B / R68：PyPI 归属校验（名字永远不是证据） ----------
+
+test('10B：project_urls 指向目标仓库时判定归属成立，evidence 为 project_urls', async () => {
+  // 真实形状（pypi.org/pypi/markitdown/json 的 info.project_urls 就是这种对象）。
+  const body = { info:{ name:'markitdown', version:'0.1.8',
+    project_urls:{ Homepage:'https://github.com/microsoft/markitdown',
+      Source:'https://github.com/microsoft/markitdown',
+      'Bug Tracker':'https://github.com/microsoft/markitdown/issues' } } };
+  const r = await lookupPyPI(client(body), 'markitdown', 'microsoft/markitdown');
+  assert.equal(r.repoMatches, true);
+  assert.equal(r.evidence, 'project_urls');
+});
+
+test('10B：project_urls 指向别的仓库时必须判不匹配（包名与项目同名也不算证据）', async () => {
+  // 最关键的一条：PyPI 上同样有同名/抢注/仿冒包，包名绝不参与归属判定。
+  const body = { info:{ name:'markitdown', version:'1.0.0',
+    project_urls:{ Source:'https://github.com/dead8309/markitdown-ts' } } };
+  const r = await lookupPyPI(client(body), 'markitdown', 'microsoft/markitdown');
+  assert.equal(r.repoMatches, false);
+  assert.equal(r.evidence, 'none');
+
+  // 实测（pypi.org/pypi/opencode-ai/json，0.1.0a36）：它的 project_urls 声明的是
+  // https://github.com/sst/opencode-sdk-python —— 包名与目标仓库 sst/opencode 很像，
+  // 声明的是**另一个仓库**，严格相等不成立，所以绝不据此下发 pip install。
+  // 归属问的是"这个包是不是这个仓库发布的"，同名、同组织都不等于同一个仓库。
+  const real = { info:{ name:'opencode-ai', version:'0.1.0a36',
+    project_urls:{ Homepage:'https://github.com/sst/opencode-sdk-python',
+      Repository:'https://github.com/sst/opencode-sdk-python' }, home_page:null } };
+  const realResult = await lookupPyPI(client(real), 'opencode-ai', 'sst/opencode');
+  assert.equal(realResult.repoMatches, false);
+  assert.equal(realResult.evidence, 'none');
+});
+
+test('10B：只有 home_page 指向目标仓库时也算归属成立，evidence 为 home_page', async () => {
+  const body = { info:{ name:'x', version:'1.0.0', project_urls:null,
+    home_page:'https://github.com/sst/opencode' } };
+  const r = await lookupPyPI(client(body), 'x', 'sst/opencode');
+  assert.equal(r.repoMatches, true);
+  assert.equal(r.evidence, 'home_page');
+});
+
+test('10B：project_urls 优先于 home_page；project_urls 不命中时回落到 home_page', async () => {
+  const both = { info:{ name:'x', version:'1.0.0',
+    project_urls:{ Source:'https://github.com/sst/opencode' },
+    home_page:'https://gitlab.com/sst/opencode' } };
+  assert.equal((await lookupPyPI(client(both), 'x', 'sst/opencode')).evidence, 'project_urls');
+
+  const fallback = { info:{ name:'x', version:'1.0.0',
+    project_urls:{ Source:'https://github.com/dead8309/markitdown-ts' },
+    home_page:'https://github.com/sst/opencode' } };
+  assert.equal((await lookupPyPI(client(fallback), 'x', 'sst/opencode')).evidence, 'home_page');
+});
+
+test('10B：归属字段缺失、为 null 或结构不对时失败关闭（false / none）', async () => {
+  const mk = (info) => ({ info:{ name:'x', version:'1.0.0', ...info } });
+  // ① 两者都没有
+  assert.deepEqual(await lookupPyPI(client(mk({})), 'x', 'sst/opencode'),
+    { packageName:'x', version:'1.0.0', requiresPython:null, repoMatches:false, evidence:'none' });
+  // ② 显式 null
+  for (const info of [{ project_urls:null }, { project_urls:null, home_page:null }, { home_page:null }]) {
+    const r = await lookupPyPI(client(mk(info)), 'x', 'sst/opencode');
+    assert.equal(r.repoMatches, false, JSON.stringify(info));
+    assert.equal(r.evidence, 'none', JSON.stringify(info));
+  }
+  // ③ 结构不对：project_urls 是字符串/数组，值是数字或空串
+  for (const info of [{ project_urls:'https://github.com/sst/opencode' },
+    { project_urls:[ 'https://github.com/sst/opencode' ] },
+    { project_urls:{ Source:42 } },
+    { project_urls:{ Source:'' } },
+    { project_urls:{ Source:'https://github.com/sst' } }]) {
+    const r = await lookupPyPI(client(mk(info)), 'x', 'sst/opencode');
+    assert.equal(r.repoMatches, false, JSON.stringify(info));
+    assert.equal(r.evidence, 'none', JSON.stringify(info));
+  }
+  // ④ 目标仓库为空时永远不成立
+  assert.equal((await lookupPyPI(client(mk({ project_urls:{ Source:'https://github.com/sst/opencode' } })), 'x', '')).evidence, 'none');
+  // ⑤ 非 GitHub 主机的同名仓库不是同一个仓库（归一化保留主机名）
+  assert.equal((await lookupPyPI(client(mk({ home_page:'https://gitlab.com/sst/opencode' })), 'x', 'sst/opencode')).evidence, 'none');
+});
+
+test('10B：project_urls 的值是遗留写法（Owner/Repo 简写、大小写、.git、子路径）时仍能严格命中', async () => {
+  // 复用 normalizeRepoUrl 的既有能力，不另造一套比较规则。
+  const mk = (value) => ({ info:{ name:'x', version:'1.0.0', project_urls:{ Source:value } } });
+  for (const value of ['SST/OpenCode', 'git+https://github.com/sst/opencode.git',
+    'https://github.com/sst/opencode/tree/main/packages/x', 'https://github.com/SST/OpenCode/']) {
+    const r = await lookupPyPI(client(mk(value)), 'x', 'sst/opencode');
+    assert.equal(r.repoMatches, true, `值：${value}`);
+    assert.equal(r.evidence, 'project_urls', `值：${value}`);
+  }
+  // 目标仓库自己的大小写也不影响判定（两边都过归一化）。
+  assert.equal((await lookupPyPI(client(mk('https://github.com/sst/opencode')), 'x', 'SST/OpenCode')).repoMatches, true);
+});
+
+test('10B：project_urls 的键名顺序不影响判定（按排序遍历，结果确定）', async () => {
+  const ordered = { info:{ name:'x', version:'1.0.0',
+    project_urls:{ 'Bug Tracker':'https://example.com/issues', Documentation:'https://docs.example.com',
+      Source:'https://github.com/sst/opencode' } } };
+  const shuffled = { info:{ name:'x', version:'1.0.0',
+    project_urls:{ Source:'https://github.com/sst/opencode', Documentation:'https://docs.example.com',
+      'Bug Tracker':'https://example.com/issues' } } };
+  for (const body of [ordered, shuffled]) {
+    const r = await lookupPyPI(client(body), 'x', 'sst/opencode');
+    assert.equal(r.repoMatches, true);
+    assert.equal(r.evidence, 'project_urls');
+  }
+  // 纯文档站（归一化后要么是空串、要么带上主机名）永远不是证据。
+  const docsOnly = { info:{ name:'x', version:'1.0.0',
+    project_urls:{ Documentation:'https://docs.example.com', Homepage:'https://example.com' } } };
+  assert.equal((await lookupPyPI(client(docsOnly), 'x', 'sst/opencode')).evidence, 'none');
+});
+
+test('10B：PyPI 请求失败或响应为 null 时返回 null（不产出 false 结论）', async () => {
+  assert.equal(await lookupPyPI({ getJson: async () => null }, 'x', 'a/b'), null);
+  assert.equal(await lookupPyPI({ getJson: async () => { throw new Error('网络超时'); } }, 'x', 'a/b'), null);
+  assert.equal(await lookupPyPI(client('不是对象'), 'x', 'a/b'), null);
+  assert.equal(await lookupPyPI({}, 'x', 'a/b'), null);
+});
+
+test('10B：PyPI 查询仍然不吃 GitHub 额度（api 恒为 none），且请求地址不变', async () => {
+  const spy = spying({ info:{ name:'MarkItDown', version:'0.1.8',
+    project_urls:{ Source:'https://github.com/microsoft/markitdown' } } });
+  await lookupPyPI(spy, 'MarkItDown', 'microsoft/markitdown');
+  assert.deepEqual(spy.calls, [{ url:'https://pypi.org/pypi/markitdown/json', options:{ api:'none' } }]);
 });
 
 // ---------- isPythonCompatible 的边界 ----------

@@ -17,6 +17,9 @@
 //     package.json 里的**声明**，它证明的是"这个包明确宣称自己来自该仓库"，
 //     不是密码学意义上的作者身份证明——所以判定必须严格相等，绝不允许"看起来像"。
 //   · 一次请求就够：版本对象同时带 bin（能不能 npx 直接跑）与 os（支不支持 Windows）；
+//   · PyPI 侧同理（Task 10B / R68）：归属只认 PyPI 自己声明的 project_urls（优先，按键名排序遍历）
+//     与 home_page，归一化后仍须与目标 owner/repo 严格相等；两者都拿不到就 repoMatches:false，
+//     下游也就不下发 pip install——PyPI 上同样有同名/抢注/仿冒包，"信包名"的错误换个生态一样错；
 //   · requires_python 缺失（null）表示"不挑版本"，视为兼容；
 //   · 任何异常、null 响应体、结构不对的响应一律返回 null，永不抛错——
 //     一次查询失败不能带崩整轮采集，更不能因为"没查到"被误当成"可以装"。
@@ -212,13 +215,44 @@ export async function lookupNpm(client, packageName, repoFullName) {
 const normalizePyPIName = (name) => name.toLowerCase().replace(/[-_.]+/g, '-');
 
 /**
- * 直查 PyPI JSON API，读出最新版本与 requires_python（交给调用方做版本兼容判断）。
+ * Task 10B（R68）：从 PyPI 自己声明的元数据里找归属证据——**包名在任何情况下都不参与判定**。
+ * 顺序：`project_urls`（按键名排序后遍历，保证同一份响应每次都得到同一个结论）→ `home_page`。
+ * 判定与 npm 侧同源：都用 `normalizeRepoUrl` 归一化后与目标 owner/repo **严格相等**；
+ * 纯文档站（https://opencode.ai、https://example.com/docs）归一化后要么是空串、要么带上主机名，
+ * 永远不可能与 owner/repo 相等。
+ * 一条证据都没有（字段缺失、为 null、结构不对、目标为空）时返回 'none'——
+ * 宁可不给 pip install 命令，也不靠"看起来像"。这些字段是发布者自己写的**声明**，
+ * 证明的是"这个包明确宣称自己来自该仓库"，不是密码学意义上的作者身份证明。
+ * @param {object} info PyPI JSON API 响应里的 info 对象
+ * @param {string} target 归一化后的目标仓库 owner/repo
+ * @returns {'project_urls'|'home_page'|'none'} 命中的来源名，或 none
+ */
+const findPyPiOwnershipEvidence = (info, target) => {
+  if (target === '') return 'none';
+
+  const projectUrls = info?.project_urls;
+  if (projectUrls && typeof projectUrls === 'object' && !Array.isArray(projectUrls)) {
+    for (const key of Object.keys(projectUrls).sort()) {
+      if (normalizeRepoUrl(projectUrls[key]) === target) return 'project_urls';
+    }
+  }
+
+  if (normalizeRepoUrl(info?.home_page) === target) return 'home_page';
+  return 'none';
+};
+
+/**
+ * 直查 PyPI JSON API，读出最新版本、requires_python 与**归属证据**。
+ * 归属（Task 10B / R68）：PyPI 上也有同名/抢注/仿冒包，所以 repoMatches 只能来自 PyPI 自己
+ * 声明的 project_urls / home_page（归一化后严格相等），包名不是证据；两者都拿不到证据时
+ * 一律 false + evidence 'none'（失败关闭），下游 classifyRunnability 也就不下发 pip install。
  * @param {object} client 注入的网络客户端
  * @param {string} packageName PyPI 包名（大小写与 -/_/. 的差异会被归一化）
- * @returns {Promise<{packageName: string, version: string, requiresPython: string|null}|null>}
- *          查询失败或响应结构不对时为 null
+ * @param {string} repoFullName 目标仓库的 owner/repo（来自 GitHub，不是来自包名）
+ * @returns {Promise<{packageName: string, version: string, requiresPython: string|null, repoMatches: boolean, evidence: string}|null>}
+ *          查询失败或响应结构不对时为 null；evidence 说明 repoMatches 凭什么成立
  */
-export async function lookupPyPI(client, packageName) {
+export async function lookupPyPI(client, packageName, repoFullName) {
   try {
     if (!client || typeof client.getJson !== 'function') return null;
     const name = typeof packageName === 'string' ? packageName.trim() : '';
@@ -237,10 +271,15 @@ export async function lookupPyPI(client, packageName) {
       ? info.requires_python.trim()
       : null;
 
+    const evidence = findPyPiOwnershipEvidence(info, normalizeRepoUrl(repoFullName));
+
     return {
       packageName: typeof info.name === 'string' && info.name !== '' ? info.name : name,
       version,
-      requiresPython
+      requiresPython,
+      // 包名相同不算证据：只有 project_urls / home_page 归一化后与目标仓库严格相等才算（Task 10B）。
+      repoMatches: evidence !== 'none',
+      evidence
     };
   } catch {
     return null;

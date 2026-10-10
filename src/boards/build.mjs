@@ -22,21 +22,10 @@ const SORT_VALUES = {
 };
 
 /**
- * 候选能不能进"新手能玩"（spec §6.4）：过了硬门槛之后，还要排除纯资源清单类——
- * 语言为空或只有 Markdown、且没有已核实的安装方式。这类项目只在经典榜里补课。
- * 注意门槛已经把"没有已核实安装方式"挡下了，这里的 kind === 'none' 是第二道保险。
- * @param {object} candidate
- * @returns {boolean}
- */
-function isNewbieFriendly(candidate) {
-  const { repo, runnability } = candidate;
-  if (!repo?.language) return false;
-  if (repo.language === 'Markdown') return false;
-  return runnability?.kind !== 'none';
-}
-
-/**
- * 榜单排序：先按排序键降序，同分按 ownerRepo 字典序升序。
+ * 榜单排序：先按排序键降序，同分按 ownerRepo 码点序升序。
+ * 这里刻意不用 localeCompare：它按运行时语言环境（ICU / 默认 locale）排序，'Zed/x' 会被排到
+ * 'apple/y' 之后——换一台机器或换一个 Node 构建就可能得到不同榜单，而且不会报错。
+ * 显式码点比较（UTF-16 码元）在任何环境下结果都一样，这才叫确定性排序。
  * ownerRepo 认不出来时退化成空串参与比较，保证顺序永远确定，不会因为 undefined 变成 NaN 比较。
  * @param {(scored: object) => number} sortValue
  * @returns {(a: object, b: object) => number}
@@ -47,7 +36,9 @@ function comparator(sortValue) {
     const bv = sortValue(b);
     const diff = (Number.isFinite(bv) ? bv : 0) - (Number.isFinite(av) ? av : 0);
     if (diff !== 0) return diff;
-    return String(a.repo?.ownerRepo ?? '').localeCompare(String(b.repo?.ownerRepo ?? ''));
+    const an = String(a.repo?.ownerRepo ?? '');
+    const bn = String(b.repo?.ownerRepo ?? '');
+    return an < bn ? -1 : an > bn ? 1 : 0;
   };
 }
 
@@ -74,7 +65,7 @@ function toScored(candidate, now) {
 /**
  * 组装一个榜单（spec §4.1）。
  * - weekly：过门槛的候选按三轴总分降序；
- * - newbie：过门槛、且不是纯资源清单类的候选按新手友好分降序；
+ * - newbie：同一套门槛过滤，按新手友好分降序（"可落地分优先"，spec §4.1 的原文口径）；
  * - classic：不看门槛、不看评分，所有候选按收藏数降序。
  * 三个榜都截断到 BOARD_SIZES 规定的条数，rank 从 1 开始连续编号；
  * 同一个仓库进两个榜时各自独立排名。
@@ -93,9 +84,11 @@ export function buildBoard(boardId, items, now = new Date()) {
   const keep = (candidate) => {
     // 经典榜只按收藏数排，不参与三轴评分、也不看门槛（spec §4.1）。
     if (boardId === CLASSIC_ID) return true;
-    if (!passesGates(candidate.repo, candidate.runnability, now).ok) return false;
-    // 新手榜再过一道：纯资源清单类不进来（spec §6.4），它们只在经典榜里补课。
-    return boardId === 'newbie' ? isNewbieFriendly(candidate) : true;
+    // 周榜与新手榜共用同一套硬门槛，两榜的区别只在排序键。
+    // 门槛 5 已经挡下所有没有已核实安装路径的候选，门槛 6（spec §6.4 的合取式）只是它的子集、
+    // 多给一句更准确的中文理由，不新增排除——所以"清单类"只由 passesGates 一处定义，
+    // 这里不再叠一道（自己实现的过滤器只可能把"有安装包但没标语言"的仓库误伤出榜）。
+    return passesGates(candidate.repo, candidate.runnability, now).ok;
   };
 
   const sortValue = SORT_VALUES[board.sortBy];

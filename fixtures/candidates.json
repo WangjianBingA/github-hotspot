@@ -1,6 +1,42 @@
 [
   {
     "repo": {
+      "ownerRepo": "Zed/x",
+      "description": "同分对照项目三，名字以大写字母开头，用来暴露按语言环境排序的不确定性",
+      "language": "Go",
+      "stars": 5000,
+      "forks": 300,
+      "openIssues": 20,
+      "closedIssues": 80,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": true },
+    "velocity": { "gained7d": 1600, "confidence": "measured" },
+    "extra": { "growing": true }
+  },
+  {
+    "repo": {
+      "ownerRepo": "apple/y",
+      "description": "同分对照项目四，名字以小写字母开头，码点序必须排在大写之后",
+      "language": "Go",
+      "stars": 5000,
+      "forks": 300,
+      "openIssues": 20,
+      "closedIssues": 80,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": true },
+    "velocity": { "gained7d": 1600, "confidence": "measured" },
+    "extra": { "growing": true }
+  },
+  {
+    "repo": {
       "ownerRepo": "alpha/tied-one",
       "description": "同分对照项目一，用来验证同分时的字典序稳定排序",
       "language": "JavaScript",
@@ -15,6 +51,24 @@
     },
     "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": true },
     "velocity": { "gained7d": 1500, "confidence": "measured" },
+    "extra": { "growing": true }
+  },
+  {
+    "repo": {
+      "ownerRepo": "zeta/no-lang-exe",
+      "description": "没有标注语言但有已核实安装包的工具",
+      "language": null,
+      "stars": 1500,
+      "forks": 120,
+      "openIssues": 12,
+      "closedIssues": 88,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": { "kind": "releaseWindows", "verified": true, "chineseDoc": true },
+    "velocity": { "gained7d": 1400, "confidence": "measured" },
     "extra": { "growing": true }
   },
   {

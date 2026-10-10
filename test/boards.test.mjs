@@ -6,8 +6,8 @@ import candidates from '../fixtures/candidates.json' with { type: 'json' };
 
 const NOW = new Date('2026-10-10T00:00:00Z');
 
-// 门槛挡下的四个候选：各自只违反一条门槛，便于定位回归。
-const BLOCKED = ['bad/archived', 'bad/nolicense', 'bad/unverified', 'bad/stale'];
+// 门槛挡下的五个候选：前四个各自只违反一条门槛，awesome/list-only 同时违反门槛 5 与门槛 6。
+const BLOCKED = ['bad/archived', 'bad/nolicense', 'bad/unverified', 'bad/stale', 'awesome/list-only'];
 
 test('周榜遵守 15 条上限且按总分降序', () => {
   const b = buildBoard('weekly', candidates, NOW);
@@ -22,9 +22,11 @@ test('门槛挡下的项目不出现在周榜与新手榜', () => {
   for (const id of BLOCKED) assert.ok(!newbieIds.includes(id), `${id} 不该出现在新手榜`);
 });
 
-test('纯清单类不进新手榜但进经典榜', () => {
+test('纯清单类被门槛挡在新手榜外，但仍进经典榜', () => {
   const newbie = buildBoard('newbie', candidates, NOW).map((x) => x.repo.ownerRepo);
   const classic = buildBoard('classic', candidates, NOW).map((x) => x.repo.ownerRepo);
+  // awesome/list-only 是被门槛 5（没有已核实的安装方式）与门槛 6（spec §6.4 资料清单）
+  // 一起挡下的，不是被"新手榜专属过滤器"挡下的——代码里没有那样的过滤器。
   assert.ok(!newbie.includes('awesome/list-only'));
   assert.ok(classic.includes('awesome/list-only'));
 });
@@ -85,6 +87,32 @@ test('每条结果都是完整的 RankedItem，并带中文上榜理由', () => 
   assert.equal(top.chineseDoc, true);
   assert.equal(top.grade, 'green');
   assert.ok(top.reasons.length >= 1);
-  // 新手榜前几名安装路径与中文分都是满分，同分时按 ownerRepo 字典序定先后。
-  assert.equal(buildBoard('newbie', candidates, NOW)[0].repo.ownerRepo, 'epsilon/shrinkvid');
+  // 新手榜先按新手友好分排，满分 25 的候选有四个（同分时码点序最前的是 'Zed/x'，但它只有 21 分）。
+  const newbie = buildBoard('newbie', candidates, NOW);
+  assert.equal(newbie[0].repo.ownerRepo, 'epsilon/shrinkvid');
+  assert.equal(newbie[0].score.runnable, 25);
+});
+
+test('没有标注语言但有已核实安装路径的仓库，两个榜都进', () => {
+  // zeta/no-lang-exe 的 language 是 null，但它有已核实的 releaseWindows 安装包，六条门槛全过。
+  // 门槛不过问语言字段，所以它必须同时出现在周榜与新手榜；若哪天有人给新手榜再加一道
+  // "语言不能为空"的过滤器，这条断言就会失败（spec §6.4 的清单类判定是合取，
+  // 且只由 passesGates 一处实现）。
+  const w = buildBoard('weekly', candidates, NOW).map((x) => x.repo.ownerRepo);
+  const n = buildBoard('newbie', candidates, NOW).map((x) => x.repo.ownerRepo);
+  assert.equal(candidates.find((c) => c.repo.ownerRepo === 'zeta/no-lang-exe').repo.language, null);
+  assert.ok(w.includes('zeta/no-lang-exe'), '有已核实安装包就该留在周榜');
+  assert.ok(n.includes('zeta/no-lang-exe'), '有已核实安装包就该进新手榜');
+});
+
+test('同分回退用码点比较，不依赖运行时语言环境', () => {
+  // 大小写混合时 localeCompare 会给出与码点不同的顺序（实测 'Zed/x'.localeCompare('apple/y') === 1），
+  // 那样换一台机器或换一个 Node 构建就可能排出不同榜单。这里要求码点序：大写字母在小写字母之前。
+  const b = buildBoard('weekly', candidates, NOW);
+  const zed = b.findIndex((x) => x.repo.ownerRepo === 'Zed/x');
+  const apple = b.findIndex((x) => x.repo.ownerRepo === 'apple/y');
+  assert.notEqual(zed, -1, 'Zed/x 应出现在周榜里');
+  assert.notEqual(apple, -1, 'apple/y 应出现在周榜里');
+  assert.equal(b[zed].score.total, b[apple].score.total, '两个对照项目的总分必须相同');
+  assert.ok(zed < apple, '码点序下 Zed/x 必须排在 apple/y 之前');
 });

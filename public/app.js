@@ -47,6 +47,13 @@ const state = {
 
 const el = (id) => document.getElementById(id);
 
+/** 把值转成能安全放进 HTML 属性的文本（数据文件是外部输入，不能假设它一定干净）。 */
+const escapeAttr = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/"/g, '&quot;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
+
 /** 从地址栏取要看的日期（`?date=2026-10-10`），没有就让调用方给默认值。 */
 function dateFromUrl() {
   try {
@@ -173,7 +180,8 @@ function renderBoard() {
     : boardNotice({ boardTitle: title, itemCount: all.length });
 
   const cards = items.map((item) => {
-    const full = typeof item?.ownerRepo === 'string' ? item.ownerRepo : '';
+    // 项目全名要进 HTML 属性，所以先把引号之类转义掉：数据文件是外部输入，不能假设它一定干净。
+    const full = escapeAttr(typeof item?.ownerRepo === 'string' ? item.ownerRepo : '');
     return `<article class="card" data-board="${state.boardId}" data-full="${full}" tabindex="0">`
       + itemCard({ boardId: state.boardId, item })
       + '</article>';

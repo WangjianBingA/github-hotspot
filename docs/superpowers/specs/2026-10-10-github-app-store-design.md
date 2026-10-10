@@ -280,19 +280,22 @@ github-hotspot/
 | 轴 | 分值 | 子项 |
 |---|---|---|
 | **热度** | 45 | 7 日新增收藏，`log10` 归一化：`45 × min(1, log10(1+v) / log10(1+3000))` |
-| **口碑** | 30 | fork/star 比 6 + issue 处理率 8 + 近期提交活跃 6 + 近 90 天有发版 4 + 许可证齐全 3 + 收藏持续增长 3 |
+| **口碑** | 30 | fork/star 比 8 + 近期提交活跃 8 + 近 90 天有发版 6 + 许可证齐全 4 + 收藏持续增长 4 |
 | **新手友好** | 25 | 安装路径 0-18 + 中文文档 0-7 |
 
-**口碑子项的确定性口径**（全部只用已获取字段，无需额外请求，可单测；六项之和 = 30 = `WEIGHTS.reputation`）
+**口碑子项的确定性口径**（全部只用已获取字段，无需额外请求，可单测；五项之和 = 30 = `WEIGHTS.reputation`）
 
 | 子项 | 计算方式 | 满分条件 |
 |---|---|---|
-| fork/star 比 | `forks / stars` | ≥ 0.15 |
-| issue 处理率 | `closed_issues / (closed_issues + open_issues)` | ≥ 0.8 |
-| 近期提交活跃 | `pushed_at` 距今天数 | ≤ 2 天满分，≤ 7 天得 4 分 |
+| fork/star 比 | `forks / stars` | ≥ 0.15（线性：`8 × min(1, ratio / 0.15)`）|
+| 近期提交活跃 | `pushed_at` 距今天数 | ≤ 2 天满分；≤ 7 天得 `8 × 2 / 3` |
 | 近 90 天有发版 | 最新 release 时间 | 有发版满分 |
 | 许可证齐全 | `license.spdx_id` 存在且非 `NOASSERTION` | 存在满分 |
-| 收藏持续增长 | 历史 JSON 相邻两期差值 > 0 | 有增长满分（数据不足给中性分，不惩罚新项目） |
+| 收藏持续增长 | 历史 JSON 相邻两期差值 > 0 | 有增长满分（数据不足给**中性半分 2**，不惩罚新项目）|
+
+> **为什么没有"issue 处理率"（2026-10-10 修订）**：原设计含 `closed_issues / (closed_issues + open_issues)`，占 8 分。控制者用真实 API 实测确认 **`closed_issues` 字段在仓库详情与 search 结果里都不存在**（含 issue 的字段只有 `issue_events_url` / `issue_comment_url` / `issues_url` / `has_issues` / `open_issues_count` / `open_issues`）。该子项在真实数据下恒为 0，会让界面对**每一个**项目显示"作者管不管事 = 0 分"（一句假话），并把口碑轴满分压到 22、破坏 45/30/25 的平衡。故移除，8 分重新分配给**可测量**的信号。
+>
+> **留作可改进空间**：若要恢复"作者管不管事"，可行的正确做法是每候选追加一次 `GET /search/issues?q=repo:{owner}/{repo}+type:issue+state:closed&per_page=1` 读 `total_count`——但它走 **search 额度（10 次/分钟）**，需为全部过门槛候选付费并有节奏地限速。当前判断：收益不抵成本，故不做。
 
 **新手友好子项**（v1 的"可落地分"更名，口径不变；安装路径 0-18 + 中文文档 0-7 = 25 = `WEIGHTS.runnable`）
 

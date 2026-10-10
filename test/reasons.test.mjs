@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildReasons, formatVelocityText } from '../src/score/reasons.mjs';
+// R50：要用真实的评分函数验证"分数不能说成事实"，而不是自己手写 parts。
+import { scoreReputation } from '../src/score/score.mjs';
+import { DETAIL_WEIGHTS } from '../src/config/weights.mjs';
 
 test('实测不带"约"，估算必须带"约"与"估算"', () => {
   assert.equal(formatVelocityText({ gained7d: 1234, confidence: 'measured' }), '本周新增收藏 1,234（实测）');
@@ -108,12 +111,49 @@ test('已停止维护的项目给停机结论，许可证这条依然为真、�
 
 test('近期有提交、近 90 天发过新版本、许可证齐全各自成为口碑理由', () => {
   const rs = buildReasons({
-    score: { parts: { installPath: 18, chinese: 7, pushRecency: 8, release90d: 6, license: 4 } }
+    score: { parts: { installPath: 18, chinese: 7, pushRecency: 8, release90d: 6, license: 4 } },
+    // R50：这一句读的是事实（repo.hasRelease90d），不是分数——所以要给出这个事实。
+    repo: { pushedAt: new Date().toISOString(), hasRelease90d: true }
   });
   assert.ok(rs.some(r => r.includes('仍在更新')));
   assert.ok(rs.some(r => r.includes('新版本')));
   assert.ok(rs.some(r => r.includes('许可证')));
   assert.ok(rs.length <= 5);
+});
+
+// R50：这句话断言的是"确认在 90 天内发过版"，所以只能由**事实**触发，不能由分数触发。
+// R40 让"未知"拿到中性半分 3 分，若门槛继续读分数（parts.release90d > 0），
+// 我们就会在并不知道的情况下对用户说"作者最近还发过新版本"——把"没问到"说成"确认如此"。
+// 与之配套：门槛不依赖 DETAIL_WEIGHTS.release90d 的数值，日后调分不会静默改变文案行为。
+test('只有"确认近期发过版"才说"作者最近还发过新版本"，未知与确认没有都不说（R50）', () => {
+  // 三条输入只差 hasRelease90d（三态：true / false / null），其余字段完全相同。
+  const make = (hasRelease90d) => ({
+    score: { parts: { installPath: 18, chinese: 0, release90d: 6, license: 0 } },
+    repo: { pushedAt: '2026-09-01T00:00:00Z', hasRelease90d }
+  });
+
+  const confirmed = buildReasons(make(true), new Date('2026-10-10T00:00:00Z'));
+  assert.ok(confirmed.some(r => r.includes('新版本')), `确认发过版要出这句话，实际：${JSON.stringify(confirmed)}`);
+
+  for (const value of [false, null, undefined]) {
+    const rs = buildReasons(make(value), new Date('2026-10-10T00:00:00Z'));
+    assert.ok(rs.every(r => !r.includes('新版本')),
+      `hasRelease90d=${String(value)} 时不得下"发过新版本"的结论，实际：${JSON.stringify(rs)}`);
+  }
+
+  // 分数在三种输入下一模一样（都是满分 6），全靠事实区分——这正是本用例的意义。
+  for (const value of [true, false, null]) {
+    assert.equal(make(value).score.parts.release90d, 6);
+  }
+});
+
+test('未知的发版事实（null，中性半分 3）绝不能被读成"发过新版本"（R40 + R50）', () => {
+  // 用真实的 scoreReputation 产出分数，而不是手写 parts：这是端到端钉住两层口径一致。
+  const repo = { stars: 1000, forks: 150, pushedAt: '2026-09-01T00:00:00Z', license: 'MIT', hasRelease90d: null };
+  const score = scoreReputation(repo, { growing: true }, new Date('2026-10-10T00:00:00Z'));
+  assert.equal(score.parts.release90d, DETAIL_WEIGHTS.release90d / 2);   // 3 分，> 0
+  const rs = buildReasons({ score, repo }, new Date('2026-10-10T00:00:00Z'));
+  assert.ok(rs.every(r => !r.includes('新版本')), `3 分是"没问到"，不能出这句，实际：${JSON.stringify(rs)}`);
 });
 
 test('没有发版、没有许可证就不下"发过新版本""许可证齐全"的结论', () => {

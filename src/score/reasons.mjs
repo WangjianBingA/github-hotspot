@@ -68,8 +68,10 @@ export function formatVelocityText(velocity) {
  * 缺字段、空对象、null 都不抛错；拿不到的事实就不写，绝不瞎猜——完全没有证据时返回空数组，
  * 不为了让理由看起来多几条而编造断言（'none' 这种确定性的结论只能来自确定性的输入）。
  * @param {{ score?: { parts?: object }, repo?: object, velocity?: object, runnability?: object }} [input]
- *   score 来自 scoreRepo（用到 parts 里的 installPath、chinese、pushRecency、release90d、license），
- *   runnability 形如 { kind, chineseDoc, verified }
+ *   score 来自 scoreRepo（用到 parts 里的 installPath、chinese、pushRecency、license），
+ *   runnability 形如 { kind, chineseDoc, verified }，
+ *   repo 形如 { archived, pushedAt, hasRelease90d }——其中 hasRelease90d 是 R40 的三态事实
+ *   （true 确认近 90 天发过版 / false 确认没有 / null 没问到），只有 true 才产出"发过新版本"这句（R50）
  * @param {Date} [now] 显式传入"现在"，用于判断 pushedAt 是不是近 7 天；非 Date 则不看时间
  * @returns {string[]} 0 到 5 条中文短句
  */
@@ -103,8 +105,14 @@ export function buildReasons(input = {}, now = new Date()) {
     if (isRecentlyPushed(info.pushedAt, nowTs) || parts.pushRecency > 0) {
       reasons.push('作者近 7 天仍在更新');
     }
-    // 近 90 天有发版是拿得到的事实（releases/latest），有证据才说这一条。
-    if (parts.release90d > 0) {
+    // 近 90 天有发版是拿得到的事实（releases.mjs 的列表端点；R40 三态），**读事实，不读分数**：
+    // 只有 repo.hasRelease90d === true（确认近期发过版）才说这句；false（确认没有）与
+    // null/undefined（没问到）都不说。为什么不能读 parts.release90d > 0：R40 给"未知"记的是
+    // 中性半分 3 分，3 > 0 会让"没问到"也出这句话——把"没问到"说成"确认如此"，
+    // 正是本项目修过三次的同类缺陷，方向更糟（它直接进界面文案）。
+    // 读事实还有两个好处：不必依赖 DETAIL_WEIGHTS.release90d 的具体数值（日后调分不会静默改变
+    // 文案行为），且与 score.mjs 用的是同一份事实，两层不可能再分叉。
+    if (info.hasRelease90d === true) {
       reasons.push('作者最近还发过新版本');
     }
   }

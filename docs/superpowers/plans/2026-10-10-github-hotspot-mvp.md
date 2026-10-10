@@ -844,7 +844,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`lookupNpm` 请求 `https://registry.npmjs.org/<name>`，取 `dist-tags.latest` 对应版本读 `bin`/`os`/`repository`，`repoMatches` 由 `normalizeRepoUrl` 比较得出。`lookupPyPI` 请求 `https://pypi.org/pypi/<name>/json`。`isPythonCompatible` 解析 `>=`/`<=`/`<`/`>`/`==` 与逗号多条件，只比较 major.minor。全部走 `api:'none'`。
+`lookupNpm` 请求 `https://registry.npmjs.org/<name>`，取 `dist-tags.latest` 对应版本读 `bin`/`os`/`repository`，`repoMatches` 由 `normalizeRepoUrl` 比较得出（**R42**：归属证据扩为 版本级 repository → 包级 repository → 版本级 `bugs.url` → 版本级 homepage → 包级 homepage，归一化后仍须严格相等；并输出 `evidence` 字段；**包名任何情况下不参与判定**）。`lookupPyPI` 请求 `https://pypi.org/pypi/<name>/json`。`isPythonCompatible` 解析 `>=`/`<=`/`<`/`>`/`==`/`!=` 与逗号多条件；**R47（推翻原先"只比 major.minor"）**：约束写了 patch 段就按 (major,minor,patch) 比较，`==X.Y.*` 保持 major.minor，本地版本缺 patch 按 `(major,minor,0)`，读不懂一律判不兼容（失败关闭）。全部走 `api:'none'`。
 
 - [ ] **Step 4: 运行确认通过**
 

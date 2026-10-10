@@ -79,6 +79,21 @@ test('缓存文件损坏时当作空缓存，不抛错', async () => {
 
 // ——— 以下为补充用例：覆盖任务说明中单列、但上面 7 个用例未触及的行为 ———
 
+test('预算按实际发出的请求计：重试也各吃一次预算', async () => {
+  let calls = 0;
+  const c = createClient({
+    fetchImpl: async () => { calls++; return resp('err', 500); },
+    budget: 3, sleep: async()=>{}
+  });
+  assert.equal(await c.getJson('https://api.github.com/a'), null);   // 3 次尝试正好吃光预算
+  assert.equal(calls, 3);
+  assert.equal(c.stats().coreCalls, 3);
+  assert.equal(await c.getJson('https://api.github.com/b'), null);   // 预算已耗尽：一个请求都不许再发
+  assert.equal(calls, 3);
+  assert.equal(c.stats().coreCalls, 3);
+  assert.equal(c.stats().degraded, true);
+});
+
 test('fetchText 返回纯文本响应', async () => {
   const c = createClient({ fetchImpl: async () => resp('<html>hi</html>'), budget: 10, sleep: async()=>{} });
   assert.equal(await c.fetchText('https://github.com/trending'), '<html>hi</html>');

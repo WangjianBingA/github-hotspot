@@ -1,7 +1,8 @@
 // GitHub 好玩榜 —— 串行网络客户端。
 // 这是整个项目唯一的网络出入口，只负责"怎么把请求发出去"：
 //   1. 全局严格串行：同一时刻最多 1 个在途请求（并发打 github.com 会被它自己限速到超时）；
-//   2. 额度预算：预算用尽时连请求都不发，返回 null 并标记 degraded（调用方按"本轮没数据"处理）；
+//   2. 额度预算：预算按"实际发出的请求"计（重试也各算一次）；用尽时连请求都不发，
+//      返回 null 并标记 degraded（调用方按"本轮没数据"处理）；
 //   3. 缓存优先：命中缓存直接返回，不发请求也不吃额度；
 //   4. 超时与重试：20s 超时中断，5xx / 网络错误最多尝试 3 次，退避 1s / 2s / 4s；
 //   5. 403 额度错误：reset 很远抛 RateLimitError（调用方收工），很近就睡到 reset 再试一次。
@@ -40,7 +41,7 @@ const defaultSleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms);
  * @param {object} options
  * @param {typeof fetch} [options.fetchImpl] 注入的 fetch，默认全局 fetch（测试永不发真实请求）
  * @param {string} [options.token] GitHub token；有则带 Authorization 头，绝不写日志
- * @param {number} [options.budget] 吃额度的请求总预算，默认不限
+ * @param {number} [options.budget] 吃额度的请求总预算；按实际发出的请求数计（含重试），默认不限
  * @param {object} [options.cache] 形如 createFileCache 的缓存对象
  * @param {() => number} [options.now] 返回当前毫秒时间戳，默认 Date.now
  * @param {(ms: number) => Promise<void>} [options.sleep] 等待实现，默认 setTimeout
@@ -125,19 +126,20 @@ export function createClient({
       }
     }
 
-    if (chargeQuota && coreCalls + searchCalls >= budget) {
-      // 预算是硬上限：发出去只会浪费额度，所以连请求都不发。
-      degraded = true;
-      logger?.warn?.(`额度预算已用尽（${coreCalls + searchCalls}/${budget}），跳过请求：${url}`);
-      return null;
-    }
-    if (chargeQuota) {
-      if (api === 'search') searchCalls++; else coreCalls++;
-    }
-
     let attempts = 0;
     let waitedForReset = false;
     for (;;) {
+      // 预算按"实际发出的请求"逐次扣减：重试也是真发给 GitHub 的请求，同样要吃额度。
+      // 检查放在每次 fetchImpl 调用之前——额度不够时连这一次都不发。
+      if (chargeQuota && coreCalls + searchCalls >= budget) {
+        degraded = true;
+        logger?.warn?.(`额度预算已用尽（${coreCalls + searchCalls}/${budget}），跳过请求：${url}`);
+        return null;
+      }
+      if (chargeQuota) {
+        if (api === 'search') searchCalls++; else coreCalls++;
+      }
+
       const outcome = await attemptOnce(url, api, mode);
 
       if (outcome.type === 'ok') {
@@ -199,7 +201,7 @@ export function createClient({
     },
 
     /**
-     * 本轮运行统计。
+     * 本轮运行统计。coreCalls / searchCalls 数的是实际发出的请求数（重试各计一次）。
      * @returns {{ coreCalls: number, searchCalls: number, cacheHits: number, degraded: boolean }}
      */
     stats() {

@@ -1238,6 +1238,11 @@ git commit -m "feat(enrich): 新手友好度分级与三步安装向导"
 
 **Interfaces:**
 - Consumes: Task 2–14 全部
+- **R41（控制者插入，必做）—— 两个"没有生产者"的评分子项必须在这里接线**。Task 4B 评审确认：`hasRelease90d` 与 `extra.growing` 在全仓库**只有读取处、没有写入处**，导致生产环境 `release90d` 恒 0、`growth` 恒为中性 2，口碑轴实际只能拿 24–28/30（fixture 手写了合理值，所以测试全绿而生产必错）。本任务必须：
+  - 对每个候选执行 **`repo.hasRelease90d = hasRecentRelease(release, now)`**（Task 11 的 R40 三态；`release === null` 时该字段为 `null`）。
+  - 用**与 Task 12 同一份历史 JSON** 计算 `extra.growing`：历史上有正增长 → `true`；有历史但无增长 → `false`；**尚无历史数据 → `null`**（走中性半分，不惩罚新项目）。
+  - 任一为 `null` 时（"没问到"而非"确认没有"）必须把本轮标记为 `degraded`，与 R33（RateLimitError 中止本轮）、R35（trending 返回空）同一类要求：**静默未知必须可见**。
+  - 并补一条**集成测试**证明这两个字段在本轮结果里被真正写入（不能只靠 fixture 里手写的值蒙过）。
 - Produces:
   - `runCollect({ dataDir, client, sources, now, offline }): Promise<{ date, boards: BoardResult[], apiCalls, degraded, markdown, json }>`
   - `BoardResult = { id, title, items: RankedItem[] }`

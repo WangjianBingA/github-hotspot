@@ -182,7 +182,8 @@ export function classifyRunnability(input = {}) {
     notes.push('我们只能确认这个包装得上，装好之后具体敲什么命令，要看项目主页里的说明。');
     return make('pypiCompatible', {
       command: `pip install ${name}`,
-      // 与 npm 同一口径：有取证字段就原样透传（Task 10B 会填），否则给一句能读的描述。
+      // 与 npm 同一口径：有取证字段就原样透传（lookupPyPI 现在会给 'project_urls' / 'home_page'），
+      // 拿不到时才给一句能读的描述——绝不编一个来源。
       evidence: isNonEmpty(pypi.evidence) ? pypi.evidence.trim() : `pypi package: ${name}`,
       requiresPython,
     });

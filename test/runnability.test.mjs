@@ -263,7 +263,8 @@ test('R72：none 档的卸载说明只说"这份向导没让你装"，不断言�
   }
 });
 
-// R68：上游 lookupPyPI 没有归属字段，所以在拿到 repoMatches === true 之前，一条 pip install 都不下发。
+// R68：归属是硬前提——lookupPyPI 现在会给出 repoMatches（Task 10B 起），但只有它 === true 时才下发
+// pip install；字段缺失（老数据或调用方没接上）与显式 false 一视同仁，都不下发。
 test('R68：PyPI 归属没确认（字段缺失或 false）时不下发 pip 命令，该档不成立', () => {
   const missing = { packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10' };
   const denied = { packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10', repoMatches:false };
@@ -365,7 +366,8 @@ test('evidence 照实透传：npm 说明凭什么认定归属，安装包带资�
   assert.equal(classifyRunnability({ npm:{ packageName:'a', repoMatches:true, hasBin:true, osIncludesWin:true, evidence:'homepage' } }).evidence, 'homepage');
   assert.equal(classifyRunnability({ releases:{ windowsAsset:{ name:'app-setup.exe', url:'https://x/a.exe' } } }).evidence, 'release asset: app-setup.exe');
   assert.equal(classifyRunnability({ pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:null, repoMatches:true } }).evidence, 'pypi package: markitdown');
-  // Task 10B 给 lookupPyPI 补上取证字段后，与 npm 一样原样透传（界面据此解释"凭什么认定归属"）。
+  // lookupPyPI 从 Task 10B 起会带取证字段，与 npm 一样原样透传（界面据此解释"凭什么认定归属"）；
+  // 没有该字段时退回上一行的 'pypi package: <包名>'，绝不编一个来源。
   assert.equal(classifyRunnability({ pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:null, repoMatches:true, evidence:'project_urls' } }).evidence, 'project_urls');
   assert.equal(classifyRunnability({}).evidence, null);
 });

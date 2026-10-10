@@ -249,8 +249,9 @@ const findPyPiOwnershipEvidence = (info, target) => {
  * @param {object} client 注入的网络客户端
  * @param {string} packageName PyPI 包名（大小写与 -/_/. 的差异会被归一化）
  * @param {string} repoFullName 目标仓库的 owner/repo（来自 GitHub，不是来自包名）
- * @returns {Promise<{packageName: string, version: string, requiresPython: string|null, repoMatches: boolean, evidence: string}|null>}
- *          查询失败或响应结构不对时为 null；evidence 说明 repoMatches 凭什么成立
+ * @returns {Promise<{packageName: string, version: string, requiresPython: string|null, repoMatches: boolean,
+ *   evidence: 'project_urls'|'home_page'|'none'}|null>}
+ *          查询失败或响应结构不对时为 null；evidence 说明 repoMatches 凭什么成立（'none' 表示归属不成立）
  */
 export async function lookupPyPI(client, packageName, repoFullName) {
   try {

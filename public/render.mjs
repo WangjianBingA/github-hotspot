@@ -166,7 +166,46 @@ const DRAWER_TITLES = {
   facts: '项目基本事实',
   classic: '它凭什么在这个榜里',
   faq: '常见问题',
+  // R155：这一节承载"我们为什么不给你命令"。以前 runnability 有 14 处 notes.push，
+  // 而界面只渲染**轮级**的 daily.notes，于是 R66 明确要求的"避免静默"在界面上并未兑现：
+  // 最典型的是"这个工具只提供 Linux/macOS 版"那条只存在于 notes 里，
+  // 用户看到的只有一句"我们没有找到可以放心推荐给你的安装方式"。
+  notes: '我们为什么不给你命令',
 };
+
+/**
+ * 一条 install note 该不该给用户看（R155 的分流）。
+ *
+ * 为什么需要分流：`runnability.mjs` 的 notes 一开始是给维护者与本人复核用的流水账，
+ * 里面有"我们没问到发布信息（可能是网络或额度问题）"这种**讲我们自己的困难**的话——
+ * 它对新手没有意义，硬塞进抽屉只会把真正有用的那句淹掉。
+ * 所以这里给"维护者向"的措辞留一份黑名单：命中就不显示。
+ * 黑名单刻意写得窄（只挡"我们没问到/网络或额度"这一类），**新的面向用户的说明照旧会自动显示**，
+ * 不需要有人记得来改这张表。
+ */
+const MAINTAINER_ONLY_NOTES = [/没问到它最近的发布信息/, /网络或额度问题/];
+
+/**
+ * 这个条目的 install.notes 里**值得给用户看**的那几条（R155）。
+ * 逐条只做最小校验（非空字符串）、保持原有顺序、去重；不做改写——文案是 runnability 写的。
+ * @param {object} [install] 条目里的 install 字段
+ * @returns {string[]}
+ */
+function userFacingNotes(install) {
+  const raw = install && typeof install === 'object' ? install.notes : null;
+  const list = Array.isArray(raw) ? raw : [];
+  const seen = new Set();
+  const out = [];
+  for (const note of list) {
+    if (typeof note !== 'string') continue;
+    const text = note.trim();
+    if (text === '' || seen.has(text)) continue;
+    if (MAINTAINER_ONLY_NOTES.some((pattern) => pattern.test(text))) continue;
+    seen.add(text);
+    out.push(text);
+  }
+  return out;
+}
 
 /**
  * 一条 install 数据里**真的会被渲染出来**的步骤与常见问题（R78 的判据本体）。
@@ -794,11 +833,21 @@ export function detailDrawer(input = {}) {
     : `<a class="project-link" href="https://github.com/${escapeAttr(full)}" target="_blank" rel="noreferrer noopener">打开项目主页</a>`;
   const prepareLink = '<a class="prepare-link" href="prepare.html">打开新手准备页</a>';
 
+  // R155：把"我们为什么不给你命令"如实摊开（只在真有值得给用户看的 note 时出现）。
+  // 标题按是否真的给了可操作路径分两种说法，避免"为什么没有命令"与事实不符。
+  const notes = userFacingNotes(install);
+  const notesHtml = notes.length === 0
+    ? ''
+    : `<section class="drawer-section" data-section="why-notes"><h3 class="section-title">`
+      + `${escapeHtml(install.verified === true ? '你需要知道的事' : DRAWER_TITLES.notes)}</h3>`
+      + `<ul class="plain-list">${notes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}</ul></section>`;
+
   return `<h3 class="drawer-title">${escapeHtml(name)}</h3>`
     + `<p class="drawer-path">${escapeHtml(full)}</p>`
     + (badges === '' ? '' : `<div class="badges">${badges}</div>`)
     + (description === '' ? '' : `<p class="drawer-desc">${description}</p>`)
     + guideSection
+    + notesHtml
     + whySection(boardId, item)
     + factHtml
     + velocityHtml

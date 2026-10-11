@@ -379,7 +379,9 @@ test('R64：只有 hasChinese === true 才显示「有中文说明」', () => {
   assert.equal(chineseBadge(item({ hasChinese: false })), '');
 });
 
-test('R64：只有日文文档的条目在渲染结果里绝不出现「有中文说明」', () => {
+test('R64：只有日文文档的卡片上给的是「有本地化文档（非中文）」而不是「有中文说明」', () => {
+  // R159 顺带收窄用例名（评审两次点名 N3）：这条只断言**卡片元信息**（itemMeta）里的两个徽章，
+  // 不是"渲染结果的任何位置"。抽屉那一路由下面 R155/R64+R153 那两条用例盯着。
   const html = itemMeta({ boardId: 'weekly', item: item({ hasChinese: false, localizedFiles: ['README.ja.md'] }) });
   assert.ok(!html.includes(CHINESE_BADGE));
   assert.ok(html.includes(LOCALIZED_ONLY_BADGE));
@@ -913,15 +915,19 @@ test('R111：没有安装向导的项目，卡片与提示不许承诺"三步"�
   assert.match(mixedHint, /prepare\.html/);
 });
 
-test('R112：没有项目主页链接时，那句指路话不许让人"打开下面的链接"', () => {
+test('R112 + R159：没有项目主页链接时，那句指路话不许让人"打开下面的链接"，也不许替项目下结论', () => {
   // ownerRepo 缺失 → 下方不会渲染「打开项目主页」，所以指路话也不能提它。
   const noRepo = detailDrawer({ boardId: 'weekly', item: item({ ownerRepo: '', name: '某项目' }) });
   assert.ok(!noRepo.includes('打开下面的「打开项目主页」'), '没有链接就不能让人去点那个链接');
-  assert.match(noRepo, /没有现成的安装步骤/);
+  assert.match(noRepo, /没有给这个项目准备现成的安装步骤/);
+  // R159：主语必须是"我们"，不许替项目断言"没有安装步骤"（那可能只是我们没查到）。
+  assert.ok(!/这个项目没有(现成的)?安装步骤/.test(noRepo), '这句话不许替项目下否定结论');
+  assert.match(noRepo, /我们连它的主页地址都没拿到/, '仍然要说清为什么只能让用户自己搜');
   // 有 ownerRepo 时照旧给出那条指引，并且链接真的在。
   const withRepo = detailDrawer({ boardId: 'weekly', item: item({ install: undefined }) });
   assert.match(withRepo, /打开下面的「打开项目主页」/);
   assert.match(withRepo, /class="project-link"/);
+  assert.ok(!/这个项目没有(现成的)?安装步骤/.test(withRepo), '带链接的那一句同样不许替项目下结论');
 });
 
 // ---------- ⑪ Task 17：详情抽屉（R25 / R64 / R78 / 置信度 / 转义） ----------

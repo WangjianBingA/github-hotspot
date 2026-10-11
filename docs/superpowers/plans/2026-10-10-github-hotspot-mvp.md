@@ -278,7 +278,10 @@ git commit -m "feat(score): 热度分与 log 归一化边界"
   - `calculateGrade(installPathScore): 'green' | 'yellow' | 'red'`
   - `passesGates(repo, runnability): { ok: boolean, reasons: string[] }`
   - `repo` 形状：`{ ownerRepo, stars, forks, openIssues, closedIssues, pushedAt, license, archived, language, hasRelease90d }`
-  - `runnability` 形状：`{ kind, verified, chineseDoc }`，`kind` 取自 `RUNNABLE_POINTS` 的键
+  - `runnability` 形状：`{ kind, verified, hasChinese }`，`kind` 取自 `RUNNABLE_POINTS` 的键
+    （**R143 / R153 修订**：`chineseDoc` 这个历史字段名**已删除**；判据、徽章与文案统一为 `hasChinese`
+    ——"真有中文文档"。`hasCjk`（含日韩的"有本地化文档"）只用于如实说明「有本地化文档（非中文）」，
+    不参与计分。本文件中凡是出现 `chineseDoc` 的历史片段都按 `hasChinese` 读。）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -331,21 +334,21 @@ import assert from 'node:assert/strict';
 import { scoreRunnable, calculateGrade } from '../src/score/score.mjs';
 
 test('Windows 安装包得 18 分，加中文文档共 25', () => {
-  const r = scoreRunnable({ kind:'releaseWindows', chineseDoc:true });
+  const r = scoreRunnable({ kind:'releaseWindows', hasChinese:true });
   assert.equal(r.parts.installPath, 18);
   assert.equal(r.total, 25);
 });
 
 test('无中文文档时不给中文分', () => {
-  assert.equal(scoreRunnable({ kind:'releaseWindows', chineseDoc:false }).parts.chinese, 0);
+  assert.equal(scoreRunnable({ kind:'releaseWindows', hasChinese:false }).parts.chinese, 0);
 });
 
 test('中文分封顶 7 分', () => {
-  assert.equal(scoreRunnable({ kind:'pypiCompatible', chineseDoc:true }).parts.chinese, 7);
+  assert.equal(scoreRunnable({ kind:'pypiCompatible', hasChinese:true }).parts.chinese, 7);
 });
 
 test('未知 kind 得 0 分而不是 NaN', () => {
-  assert.equal(scoreRunnable({ kind:'奇怪的kind', chineseDoc:false }).parts.installPath, 0);
+  assert.equal(scoreRunnable({ kind:'奇怪的kind', hasChinese:false }).parts.installPath, 0);
 });
 
 test('难度分级：18/16 绿，14/8 黄，6/4/0 红', () => {
@@ -365,7 +368,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`scoreReputation` 按 spec §6.1 表逐项算并返回 `parts`；`extra.growing` 为 `null`/`undefined` 时 `growth` 给 `DETAIL_WEIGHTS.growth / 2`。`scoreRunnable` 用 `RUNNABLE_POINTS[kind] ?? 0`，中文分在 `chineseDoc === true` 时给 `CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile`。`scoreRepo` 汇总并算 `total`、`grade = calculateGrade(parts.installPath)`、透传 `confidence`。`passesGates(repo, runnability, now = new Date())` 检查 spec §6.2 六条门槛，返回**全部**未通过的中文原因（"已停止维护" / "没有开源许可证" / "超过 7 天没有更新" / "收藏人数不足 200" / "没有已核实的安装方式" / "这是资料清单，不是能装的软件"）。
+`scoreReputation` 按 spec §6.1 表逐项算并返回 `parts`；`extra.growing` 为 `null`/`undefined` 时 `growth` 给 `DETAIL_WEIGHTS.growth / 2`。`scoreRunnable` 用 `RUNNABLE_POINTS[kind] ?? 0`，中文分在 `hasChinese === true` 时给 `CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile`。`scoreRepo` 汇总并算 `total`、`grade = calculateGrade(parts.installPath)`、透传 `confidence`。`passesGates(repo, runnability, now = new Date())` 检查 spec §6.2 六条门槛，返回**全部**未通过的中文原因（"已停止维护" / "没有开源许可证" / "超过 7 天没有更新" / "收藏人数不足 200" / "没有已核实的安装方式" / "这是资料清单，不是能装的软件"）。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -406,7 +409,7 @@ test('理由里必须出现安装方式与中文信息', () => {
     score: { parts: { installPath: 18, chinese: 7 } },
     repo: { pushedAt: new Date().toISOString() },
     velocity: { gained7d: 500, confidence: 'measured' },
-    runnability: { kind: 'releaseWindows', chineseDoc: true }
+    runnability: { kind: 'releaseWindows', hasChinese: true }
   });
   assert.ok(rs.some(r => r.includes('Windows')));
   assert.ok(rs.some(r => r.includes('中文')));
@@ -416,7 +419,7 @@ test('理由中不得出现行话或字段名', () => {
   const rs = buildReasons({ score:{ parts:{ installPath:18, chinese:0 } },
     repo:{ pushedAt: new Date().toISOString() },
     velocity:{ gained7d:10, confidence:'measured' },
-    runnability:{ kind:'releaseWindows', chineseDoc:false } });
+    runnability:{ kind:'releaseWindows', hasChinese:false } });
   assert.ok(rs.every(r => !/\b(star|fork|issue)s?\b/i.test(r)));
   assert.ok(rs.every(r => !/[a-z]+_[a-z]+/.test(r)));
 });
@@ -429,7 +432,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`formatVelocityText` 三种 confidence 三种文案，千分位用 `toLocaleString('zh-CN')`。`buildReasons` 从 `runnability.kind`、`chineseDoc`、`pushedAt` 距今天数、`velocity` 生成 3–5 条中文短句，全部走 spec §4.3 翻译表。
+`formatVelocityText` 三种 confidence 三种文案，千分位用 `toLocaleString('zh-CN')`。`buildReasons` 从 `runnability.kind`、`hasChinese`、`pushedAt` 距今天数、`velocity` 生成 3–5 条中文短句，全部走 spec §4.3 翻译表。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -452,7 +455,7 @@ git commit -m "feat(score): 中文上榜理由与置信度文案"
 - Consumes: `scoreRepo`、`passesGates`、`BOARD_SIZES`
 - Produces:
   - `src/config/boards.mjs` 导出 `BOARDS = [{ id:'weekly', title:'本周飙升', size:15, sortBy:'total' }, { id:'newbie', title:'新手能玩', size:15, sortBy:'runnable' }, { id:'classic', title:'经典必玩', size:30, sortBy:'stars' }]`
-  - `buildBoard(boardId, items, now?): RankedItem[]`，`items` 为 `{ repo, runnability, velocity, extra }[]`，`RankedItem = { rank, repo, runnability, velocity, score, grade, chineseDoc, reasons }`
+  - `buildBoard(boardId, items, now?): RankedItem[]`，`items` 为 `{ repo, runnability, velocity, extra }[]`，`RankedItem = { rank, repo, runnability, velocity, score, grade, hasChinese, reasons }`
 
 - [ ] **Step 1: 写失败测试** `test/boards.test.mjs`
 
@@ -514,7 +517,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`build` 对每个候选调用 `scoreRepo` 与 `passesGates`；`weekly`/`newbie` 只保留通过门槛者（`newbie` 额外排除 `language` 为空或 `kind === 'none'`）；`classic` 只按 `repo.stars` 排序；排序稳定（同分按 `ownerRepo` 字典序）；附加 `rank` 并从 1 开始；截断到 `BOARD_SIZES[boardId]`；同时带上 `reasons`（调用 `buildReasons`）与 `grade`、`chineseDoc`。
+`build` 对每个候选调用 `scoreRepo` 与 `passesGates`；`weekly`/`newbie` 只保留通过门槛者（`newbie` 额外排除 `language` 为空或 `kind === 'none'`）；`classic` 只按 `repo.stars` 排序；排序稳定（同分按 `ownerRepo` 字典序）；附加 `rank` 并从 1 开始；截断到 `BOARD_SIZES[boardId]`；同时带上 `reasons`（调用 `buildReasons`）与 `grade`、`hasChinese`。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -1131,7 +1134,7 @@ git commit -m "feat(enrich): 中文文档检测与口碑输入"
 **Interfaces:**
 - Consumes: `lookupNpm`/`lookupPyPI`（Task 10）、`pickWindowsAsset`（Task 11）、`detectChinese`（Task 13）、`calculateGrade`（Task 4）
 - Produces:
-  - `classifyRunnability({ releases, npm, pypi, chinese }): Runnability`，`Runnability = { kind, command, downloadUrl, evidence, verified, difficulty, chineseDoc, notes }`
+  - `classifyRunnability({ releases, npm, pypi, chinese }): Runnability`，`Runnability = { kind, command, downloadUrl, evidence, verified, difficulty, hasChinese, notes }`
   - `buildInstallGuide(runnability): { steps: { title, body, command? }[], faq: { q, a }[] }`
 
 - [ ] **Step 1: 写失败测试** `test/runnability.test.mjs`
@@ -1204,7 +1207,7 @@ test('安装向导固定 3 步，步骤含命令与常见问题', () => {
 
 test('Windows 安装包的第 2 步给下载链接而不是命令', () => {
   const g = buildInstallGuide({ kind:'releaseWindows', verified:true, difficulty:'green',
-    downloadUrl:'https://x/a.exe', command:null, chineseDoc:false, notes:[] });
+    downloadUrl:'https://x/a.exe', command:null, hasChinese:false, notes:[] });
   assert.match(g.steps[1].body + (g.steps[1].downloadUrl || ''), /https:\/\/x\/a\.exe/);
 });
 ```
@@ -1216,7 +1219,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-按优先级判定 `releaseWindows > npmBinWin > pypiCompatible > npmNoBin > buildFromSource > dockerOnly > none`；**任何 `repoMatches !== true` 的 npm 结果一律忽略**（**R68**：PyPI 也同理 —— `pypiOwned = pypi.repoMatches === true`，缺失/`undefined`/`false` 时不下发 `pip install`、该档不成立并写 note；`lookupPyPI` 的 `repoMatches`/`evidence` 由 Task 10B 补齐）；`difficulty = calculateGrade(RUNNABLE_POINTS[kind])`。**R51**：`windowsAsset.url` 为空/缺失不算可用安装路径，必须落到下一档。**R48**：不得调用 `isPythonCompatible` 伪造兼容结论，只带 `requiresPython` 原文。**R64**：`chineseDoc = hasCjk`（喂计分），`hasChinese` 只管徽章；仅有非中文本地化时如实说「有本地化文档（非中文）」。**R65/R66/R67**：`buildFromSource`/`docker` 为调用方提供的证据旗标（没证据不猜）；npm 有 `bin` 但不支持 Windows 时不下发命令也不降级为 `npmNoBin`（落到 `none`，与 R45 一致）；这两档 `verified` 记 `true`。**R70/R71**：当证据缺失时，文案的主语必须是"我们没查到"，**不得**宣称项目级事实（如"这个项目没有安装方式"/"只有英文说明"）。`buildInstallGuide` 生成固定三步（第 1 步"你需要先准备什么"按 kind 给结论；第 2 步按 kind 给命令或下载链接；第 3 步"怎么用"）与按 kind 的 FAQ（≥3 条，含"装错了怎么卸载"）。
+按优先级判定 `releaseWindows > npmBinWin > pypiCompatible > npmNoBin > buildFromSource > dockerOnly > none`；**任何 `repoMatches !== true` 的 npm 结果一律忽略**（**R68**：PyPI 也同理 —— `pypiOwned = pypi.repoMatches === true`，缺失/`undefined`/`false` 时不下发 `pip install`、该档不成立并写 note；`lookupPyPI` 的 `repoMatches`/`evidence` 由 Task 10B 补齐）；`difficulty = calculateGrade(RUNNABLE_POINTS[kind])`。**R51**：`windowsAsset.url` 为空/缺失不算可用安装路径，必须落到下一档。**R48**：不得调用 `isPythonCompatible` 伪造兼容结论，只带 `requiresPython` 原文。**R64**：`chineseDoc = hasCjk`（喂计分），`hasChinese` 只管徽章；仅有非中文本地化时如实说「有本地化文档（非中文）」。（**R143 修订**：计分也改为按"真有中文"的 `hasChinese`，`hasCjk` 只用于那句如实说明；**R153** 把与 `hasChinese` 恒等的 `chineseDoc` 删掉了。）**R65/R66/R67**：`buildFromSource`/`docker` 为调用方提供的证据旗标（没证据不猜）；npm 有 `bin` 但不支持 Windows 时不下发命令也不降级为 `npmNoBin`（落到 `none`，与 R45 一致）；这两档 `verified` 记 `true`。**R70/R71**：当证据缺失时，文案的主语必须是"我们没查到"，**不得**宣称项目级事实（如"这个项目没有安装方式"/"只有英文说明"）。`buildInstallGuide` 生成固定三步（第 1 步"你需要先准备什么"按 kind 给结论；第 2 步按 kind 给命令或下载链接；第 3 步"怎么用"）与按 kind 的 FAQ（≥3 条，含"装错了怎么卸载"）。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -1407,7 +1410,7 @@ git commit -m "feat(web): 静态服务器与三榜单页面"
 - Modify: `public/app.js`, `public/index.html`, `public/style.css`
 
 **Interfaces:**
-- Consumes: `public/data/<date>.json` 里每条的 `install`、`reasons`、`scores`、`grade`、`chineseDoc`、`confidence`
+- Consumes: `public/data/<date>.json` 里每条的 `install`、`reasons`、`scores`、`grade`、`hasChinese`、`confidence`
 - Produces: 详情抽屉（三步向导 + 为什么上榜 + 复制按钮）与 `prepare.html` 新手准备页
 
 - [ ] **Step 1: 写失败测试** `test/page-content.test.mjs`（静态页面内容断言，保证不出现行话、必备元素存在）

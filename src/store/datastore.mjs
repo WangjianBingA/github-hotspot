@@ -2,7 +2,8 @@
 // 本项目没有数据库：public/data/ 下的 JSON 文件就是数据库。
 //   public/data/YYYY-MM-DD.json       某天的完整榜单
 //   public/data/index.json            有数据的日期列表
-//   public/data/history/YYYY-MM.json  按月归档的历史快照（用于算真实星标差值）
+//   public/data/history/YYYY-MM.json  按月存的归档快照（每次采集顺手写一份，**目前没有任何代码读它**：
+//                                     R132 后 star-velocity 的第三级读的是 7 天前的那份当天文件）
 // 同一个日期重复写入一律覆盖，保证采集脚本可重复执行。
 
 import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';

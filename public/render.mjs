@@ -122,6 +122,41 @@ const COLLECT_COMMAND = '<code>npm run collect:offline</code>';
 const DEMO_COMMAND_HINT = '<code>npm run demo</code>（一份标着「演示数据」的内置样本，'
   + '会另起一个本地预览；运行前先按 Ctrl 加 C 停掉当前这个服务）';
 
+// ---------- app.js 贴到 DOM 上的那几个字（R149：文案一律住在这里） ----------
+//
+// R149：`public/app.js` 只该做三件事——取数据、把纯函数算好的字符串写进 DOM、收事件。
+// 下面这几个字符串以前写在 app.js 里，于是"app.js 不持有用户可见文案"这句只能靠一份
+// 8 个字面量的黑名单去守（'这条筛选对当前这个榜不生效。' 正好漏在名单外）。
+// 现在它们全部住在这里，测试改成扫 app.js 里**所有**含汉字的字符串字面量 —— 那就不是黑名单了。
+
+/** 语言下拉里的第一项（app.js 把 view.languages 拼在它后面）。 */
+export const ALL_LANGUAGES_LABEL = '全部语言';
+
+/**
+ * 语言下拉里那个"这些条目没有标注语言"的选项（R95/R103）。
+ * @param {number} count 没有标注语言的条目数
+ * @returns {string}
+ */
+export const unknownLanguageLabel = (count) => `没有标注语言（${count} 个）`;
+
+/** 日期选择器前面那句话（R99 的同一道理：只有两天以上数据时才会出现）。 */
+export const DATE_PICKER_LABEL = '看哪一天：';
+
+/** 经典榜上那条按难度筛选不生效时的说明（挂在复选框的 title 上，不是悬停才可见的提示）。 */
+export const DIFFICULTY_FILTER_OFF_TITLE = '这条筛选对当前这个榜不生效。';
+
+/**
+ * 启动就崩了（例如数据文件把某个函数喂崩了）时的兜底提示。
+ * 这是**兜底**，不是显示决策：正常路径上"该说什么"全部由 buildBoardView 决定（R101/R102）。
+ * @param {unknown} detail 技术细节（会转义后放进一个小小的 hint 里）
+ * @returns {string} HTML
+ */
+export function bootFailureNotice(detail) {
+  return '<div class="notice notice-empty"><strong>页面没能把这一期的数据读出来。</strong>'
+    + '数据文件可能坏了或者形状不对。可以刷新重试；如果一直这样，就重跑一次采集。'
+    + `<span class="hint">（技术细节：${escapeHtml(detail?.message ?? detail)}）</span></div>`;
+}
+
 // ---------- 详情抽屉的文案（Task 17；每一句都是"显示决策"，所以住在这一层） ----------
 
 /** 抽屉里各节的标题。 */
@@ -371,6 +406,10 @@ export function difficultyBadge(grade) {
  *   · hasChinese === true      → 「🈶 有中文说明」
  *   · 否则有本地化文件          → 「有本地化文档（非中文）」（有本地化文档 ≠ 有中文）
  *   · 都没有                    → 不给徽章（我们没查到，就不说）
+ * R144：`localizedFiles` 读的是**条目顶层**那一份 —— 这是导出层唯一写着它的地方
+ * （src/exporters/json.mjs 的 toItem）。以前读的是 `install.localizedFiles`，而没有任何消费者
+ * 拿到过那种形状，于是「有本地化文档（非中文）」这个徽章在生产上永远渲染不出来；
+ * 测试之所以一直是绿的，是因为用例喂的是手写形状。现在生产者与消费者只认顶层这一个字段。
  * @param {{ hasChinese?: boolean, localizedFiles?: string[] }} [item]
  * @returns {string} 徽章 HTML；不该给时是空串
  */

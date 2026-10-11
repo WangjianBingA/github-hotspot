@@ -16,8 +16,12 @@
 // 把点击接到抽屉上即可，不必重写取数与渲染流程。
 
 import {
+  ALL_LANGUAGES_LABEL,
   COPY_DONE_TEXT,
   COPY_FAIL_TEXT,
+  DATE_PICKER_LABEL,
+  DIFFICULTY_FILTER_OFF_TITLE,
+  bootFailureNotice,
   buildBoardView,
   dateList,
   detailDrawer,
@@ -26,6 +30,7 @@ import {
   itemCard,
   languageFacts,
   languageSelectionIsValid,
+  unknownLanguageLabel,
 } from './render.mjs';
 
 // 数据文件放在页面旁边（同源同目录），所以用相对地址就够了。
@@ -165,13 +170,13 @@ function renderLanguageOptions(view) {
   if (select === null) return;
   if (view.languageSelectionValid !== true) state.filters.language = '';
 
-  const options = ['<option value="">全部语言</option>'];
+  const options = [`<option value="">${escapeHtml(ALL_LANGUAGES_LABEL)}</option>`];
   for (const language of view.languages) {
     options.push(`<option value="${escapeAttr(language)}">${escapeHtml(language)}</option>`);
   }
   // 认不出语言的项目也要能被筛出来，否则它们在任何选项下都混在里面说不清。
   if (view.unknownLanguageCount > 0) {
-    options.push(`<option value="${UNKNOWN_LANGUAGE}">没有标注语言（${view.unknownLanguageCount} 个）</option>`);
+    options.push(`<option value="${escapeAttr(UNKNOWN_LANGUAGE)}">${escapeHtml(unknownLanguageLabel(view.unknownLanguageCount))}</option>`);
   }
   select.innerHTML = options.join('');
   select.value = state.filters.language;
@@ -196,7 +201,7 @@ function renderDatePicker() {
   wrap.id = 'date-picker-wrap';
   const label = document.createElement('label');
   label.htmlFor = 'date-picker';
-  label.textContent = '看哪一天：';
+  label.textContent = DATE_PICKER_LABEL;
   const select = document.createElement('select');
   select.id = 'date-picker';
   // 日期串来自 index.json（外部输入），进属性与正文前都转义。
@@ -233,7 +238,7 @@ function renderControls() {
   const label = easy === null ? null : easy.closest('label');
   if (label !== null) {
     // 挂在 title 上，同时也是可被测试断言的载体（不靠"悬停才会看到"的 Tooltip）。
-    label.title = hint === undefined ? '' : '这条筛选对当前这个榜不生效。';
+    label.title = hint === undefined ? '' : DIFFICULTY_FILTER_OFF_TITLE;
   }
 }
 
@@ -521,11 +526,9 @@ window.addEventListener('hashchange', () => {
 });
 
 // 启动失败（例如数据文件把某个函数喂崩了）也要有话说，而不是永远停在"正在读取榜单数据……"。
-// 这是**兜底**，不是显示决策：正常路径上"该说什么"全部由 buildBoardView 决定。
+// 这句话本身住在 render.mjs（R149：app.js 不持有任何用户可见文案），这里只负责贴上去。
 try {
   await boot();
 } catch (error) {
-  renderMessage('<div class="notice notice-empty"><strong>页面没能把这一期的数据读出来。</strong>'
-    + '数据文件可能坏了或者形状不对。可以刷新重试；如果一直这样，就重跑一次采集。'
-    + `<span class="hint">（技术细节：${escapeHtml(error?.message ?? error)}）</span></div>`);
+  renderMessage(bootFailureNotice(error));
 }

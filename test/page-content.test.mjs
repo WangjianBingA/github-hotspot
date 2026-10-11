@@ -15,6 +15,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createStaticServer } from '../src/http/static-server.mjs';
+import { buildDailyPayload } from '../src/exporters/json.mjs';
+import { WEIGHTS } from '../src/config/weights.mjs';
 import {
   CHINESE_BADGE,
   LOCALIZED_ONLY_BADGE,
@@ -313,6 +315,55 @@ test('R25：周榜与新手榜才渲染三轴分数摘要', () => {
 });
 
 // ---------- ④ R64：中文徽章必须诚实 ----------
+
+test('R144：后端产出的真形状能渲染出「有本地化文档（非中文）」徽章', () => {
+  // 这条用例存在的唯一理由：徽章以前读的字段（`install.localizedFiles`）与生产者写的字段
+  // （顶层 `localizedFiles`）不是同一个地方，于是它在生产上**永远渲染不出来**；
+  // 而旧用例喂的是手写扁平形状，正好把两边都凑齐了，所以一直是绿的。
+  // 现在这里必须走 buildDailyPayload 产出的真形状 —— 生产者与消费者对不上就会红。
+  const payload = buildDailyPayload(
+    [{ id: 'weekly', title: '本周飙升', items: [{
+      rank: 1,
+      repo: { ownerRepo: 'jp/japanese-only', name: 'japanese-only', description: '只有日文说明', language: 'Go', stars: 6800, forks: 420, license: 'Apache-2.0', pushedAt: '2026-10-09T12:00:00Z', archived: false, hasRelease90d: true },
+      runnability: { kind: 'npmBinWin', command: 'npx jp-tool', verified: true, difficulty: 'green', chineseDoc: false, hasChinese: false, localizedFiles: ['README.ja.md'], notes: [] },
+      velocity: { gained7d: 1400, gained3d: null, confidence: 'measured', source: 'history-json', level: 3 },
+      score: { hot: 40, reputation: 20, runnable: 16, total: 76, parts: { installPath: 16, chinese: 0 } },
+      grade: 'green',
+      reasons: ['有本地化文档，但不是中文'],
+    }] }],
+    '2026-10-10',
+    { generatedAt: '2026-10-10T00:00:00Z', demo: true },
+  );
+
+  const produced = payload.boards[0].items[0];
+  // ① 生产者写在哪里：顶层有、install 里**没有**（只留一个真相源）。
+  assert.deepEqual(produced.localizedFiles, ['README.ja.md'], '导出层要把 localizedFiles 放在条目顶层');
+  assert.ok(!('localizedFiles' in produced.install), 'install 里不该再有第二份 localizedFiles');
+  // ② 消费者读得出来：卡片与详情两处都要有那个徽章。
+  const card = itemMeta({ boardId: 'weekly', item: produced });
+  assert.ok(card.includes(LOCALIZED_ONLY_BADGE), `卡片上没有非中文徽章：${card}`);
+  assert.ok(!card.includes(CHINESE_BADGE), '日文文档不许挂中文徽章');
+  const drawer = detailDrawer({ boardId: 'weekly', item: produced });
+  assert.ok(drawer.includes(LOCALIZED_ONLY_BADGE) || drawer.includes('非中文'), '详情里也要如实说非中文');
+  assert.ok(!drawer.includes(CHINESE_BADGE), '详情里也不许挂中文徽章');
+  // ③ 反向对照：真有中文的那一条，徽章必须是另一个（否则上面那条可能只是"任何条目都有徽章"）。
+  const zh = buildDailyPayload(
+    [{ id: 'weekly', title: '本周飙升', items: [{
+      rank: 1,
+      repo: { ownerRepo: 'cn/chinese-guide', name: 'chinese-guide', language: 'Python', stars: 4200, forks: 260, license: 'MIT', pushedAt: '2026-10-09T12:00:00Z', archived: false, hasRelease90d: true },
+      runnability: { kind: 'pypiCompatible', command: 'pip install chinese-guide', verified: true, difficulty: 'yellow', chineseDoc: true, hasChinese: true, localizedFiles: ['README.zh-CN.md'], notes: [] },
+      velocity: { gained7d: 2600, gained3d: null, confidence: 'measured', source: 'history-json', level: 3 },
+      score: { hot: 40, reputation: 20, runnable: 21, total: 81, parts: { installPath: 14, chinese: 7 } },
+      grade: 'yellow',
+      reasons: ['有中文说明，照着做不容易卡住'],
+    }] }],
+    '2026-10-10',
+    { generatedAt: '2026-10-10T00:00:00Z' },
+  ).boards[0].items[0];
+  const zhCard = itemMeta({ boardId: 'weekly', item: zh });
+  assert.ok(zhCard.includes(CHINESE_BADGE), `中文条目必须有中文徽章：${zhCard}`);
+  assert.ok(!zhCard.includes(LOCALIZED_ONLY_BADGE), '有中文时不该再挂"非中文"那个徽章');
+});
 
 test('R64：只有 hasChinese === true 才显示「有中文说明」', () => {
   // 徽章是 HTML 片段（带样式类），所以断言"包含"而不是"等于"整串。
@@ -648,7 +699,7 @@ test('R104：只有一天数据时不得建议换一天', () => {
   assert.match(noticeOf(manyDates, 'date-missing').html, /换一天/);
 });
 
-test('R102：经典榜那句筛选说明由纯函数给，app.js 不再自己写文案', () => {
+test('R102：经典榜那句筛选说明由纯函数给；R149：app.js 里不许留下任何含汉字的字符串', () => {
   assert.equal(difficultyFilterHint('weekly'), '');
   assert.equal(difficultyFilterHint('newbie'), '');
   assert.match(difficultyFilterHint('classic'), /不参与评分/);
@@ -662,14 +713,15 @@ test('R102：经典榜那句筛选说明由纯函数给，app.js 不再自己写
   const weekly = buildBoardView({ items: threeItems(), boardId: 'weekly', daily: daily() });
   assert.equal(weekly.hints.find((h) => h.key === 'difficulty-filter'), undefined);
 
-  // app.js 里不许再出现**任何**用户可见文案（它只负责把纯函数给的字符串贴到 DOM 上）。
-  // 注释里提到产品口径不算文案，所以只扫代码部分。
-  // 必须用 stripComments 而不是随手一句正则：R106 就是这条断言的前车之鉴——当时那个正则把
-  // 字符串里的 `//` 当成注释开头，删掉了后面的真代码，于是"扫不到"被当成了"没问题"。
+  // R149：这条断言以前是一份 8 个字面量的黑名单，名字却写成"不许写任何用户可见文案"——
+  // 于是 app.js 里的「这条筛选对当前这个榜不生效。」正好漏在名单外（M1），绿灯名不副实。
+  // 现在改成**扫掉所有含汉字的字符串字面量**：文案全部搬到 render.mjs 之后，
+  // "app.js 不持有用户可见文案"这句话才是真的能被机器核对的。
   const appCode = stripComments(read('app.js'));
-  for (const copy of ['不参与评分', '一键就能玩', '过线之后', '最值得先看', '新手能玩', '本周飙升', '经典必玩', '口碑']) {
-    assert.ok(!appCode.includes(copy), `app.js 不该自己写显示文案：${copy}`);
-  }
+  const literals = appCode.match(/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g) ?? [];
+  assert.ok(literals.length > 20, `没扫到足够的字符串字面量（${literals.length} 个），正则可能写错了`);
+  const withCjk = literals.filter((literal) => /[\u4e00-\u9fff]/.test(literal));
+  assert.deepEqual(withCjk, [], `app.js 里还有用户可见文案：${withCjk.join(' / ')}`);
   // 榜单说明文案住在 render.mjs，并且每个榜都有一句。
   assert.match(boardNote('weekly'), /热度/);
   assert.match(boardNote('newbie'), /新手友好/);
@@ -689,6 +741,38 @@ test('R102：app.js 只剩取数与写 DOM，不再有"根据数据挑显示内�
   assert.match(code, /buildBoardView\(\{/);
   assert.match(code, /itemCard\(\{/);
   assert.match(code, /innerHTML = /);
+});
+
+test('R150/M4：前端那份满分表与三轴中文名，必须与 weights.mjs 一致', () => {
+  // `public/render.mjs` 里的 FULL_MARKS 是 weights.mjs 的**第二份**（用来折算分数条宽度），
+  // BOARD_TITLES 是数据文件里那份榜单名的兜底。这两份以前没有任何测试钉住：
+  // R136/R140 钉了 README、手册、口径页，偏偏漏了真正画图的前端。
+  // 这里用"满分的值渲染出来的宽度必须是 100%"来间接核对 —— 它对任何一份的改动都会红。
+  const itemWith = (hot, reputation, runnable) => ({ scores: { hot, reputation, runnable, total: hot + reputation + runnable } });
+  const html = scoreBars('weekly', itemWith(WEIGHTS.hot, WEIGHTS.reputation, WEIGHTS.runnable));
+  const widths = [...html.matchAll(/width:(\d+(?:\.\d+)?)%/g)].map((m) => Number(m[1]));
+  assert.deepEqual(widths, [100, 100, 100],
+    `三轴各自打满分时宽度必须是 100%（说明 FULL_MARKS 与 weights.mjs 一致），实际 ${JSON.stringify(widths)}`);
+  // 再看半分的折算：它必须**分别**按三条轴自己的满分算，而不是都按 100 或都按同一个数。
+  const half = scoreBars('weekly', itemWith(WEIGHTS.hot / 2, WEIGHTS.reputation / 2, WEIGHTS.runnable / 2));
+  assert.deepEqual([...half.matchAll(/width:(\d+(?:\.\d+)?)%/g)].map((m) => Number(m[1])), [50, 50, 50]);
+
+  // 三轴的中文名与顺序（heat / 口碑 / 新手友好）也必须与配置一致，不能各写各的。
+  for (const [key, label] of [['hot', '热度'], ['reputation', '口碑'], ['runnable', '新手友好']]) {
+    assert.match(html, new RegExp(`>${label}</span>`), `分数条里应当出现「${label}」`);
+    assert.equal(WEIGHTS[key] > 0, true, `weights.mjs 里应当有 ${key} 这一轴`);
+  }
+  assert.ok(html.indexOf('热度') < html.indexOf('口碑') && html.indexOf('口碑') < html.indexOf('新手友好'),
+    '三轴的顺序必须是 热度 → 口碑 → 新手友好');
+});
+
+test('R150/M4：每个榜的兜底中文名（BOARD_TITLES）能从 buildBoardView 的 boardTitle 观察到', () => {
+  // 上一条只钉住了"存在这三行文案"，这一条钉住"它们真的用在该用的榜上"。
+  const cases = [['weekly', '本周飙升'], ['newbie', '新手能玩'], ['classic', '经典必玩']];
+  for (const [boardId, title] of cases) {
+    const view = buildBoardView({ boardId, boardTitle: '', items: [], daily: null, dates: [] });
+    assert.equal(view.boardTitle, title, `数据文件没给 title 时，${boardId} 的兜底名应当是「${title}」`);
+  }
 });
 
 // ---------- R103：跨期切换后筛选状态与选项一致 ----------

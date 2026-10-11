@@ -132,6 +132,39 @@ test('部署一节必须说清发布目录是 public/，并且说清数据目录
 
 const WORKFLOW = '.github/workflows/daily.yml';
 
+/**
+ * 把工作流按 `- name:` 切成一个个步骤（从这一行到下一个 `- name:` 之前）。
+ * 为什么需要它：R133 加的那一步用的是 YAML 字面块（`run: |` 后面跟好几行 shell），
+ * 而 `run: npm run collect` 那种单行写法已经不能代表"这一步到底跑了什么"了。
+ * @returns {{ name: string, body: string, index: number }[]}
+ */
+function workflowSteps(text) {
+  const lines = text.split('\n');
+  const starts = [];
+  lines.forEach((line, i) => {
+    if (/^ {6}- name: /.test(line)) starts.push(i);
+  });
+  return starts.map((from, k) => ({
+    name: lines[from].replace(/^ {6}- name: /, '').trim(),
+    body: lines.slice(from, k + 1 < starts.length ? starts[k + 1] : lines.length).join('\n'),
+    index: k,
+  }));
+}
+
+/**
+ * 一个 YAML 文件里**会被真正执行**的那些行（也就是 shell 行），不含 `#` 开头的注释。
+ * 用来区分"代码里真的这么写"与"注释里提到这个词是为了解释为什么不那么写"。
+ * 它不解析 YAML，只做这一件事：把注释行剔掉、去掉每行缩进。
+ * （与上面那个 commandLines 同名会很危险，所以这个叫 shellLines。）
+ * @param {string} text YAML 文本
+ * @returns {string[]}
+ */
+function shellLines(text) {
+  return text.split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'));
+}
+
 test('R134：可选的每日工作流存在，且真的能采集并提交回仓库', () => {
   assert.ok(existsSync(root(WORKFLOW)), `${WORKFLOW} 不存在`);
   const text = read(WORKFLOW);
@@ -144,11 +177,14 @@ test('R134：可选的每日工作流存在，且真的能采集并提交回仓�
   // 权限：默认只读，提交回仓库必须显式要写权限。
   assert.match(text, /^ {4}permissions:$/m, '缺少 permissions');
   assert.match(text, /^ {6}contents: write([ \t]*#.*)?$/m, '缺少 contents: write');
-  // 步骤：检出 → 装 Node 22 → 采集 → 提交。
+  // 步骤：检出 → 装 Node 22 → （烟雾测试 → 清空）→ 采集 → 提交。
+  const steps = workflowSteps(text);
+  assert.ok(steps.length >= 5, `工作流步骤太少（${steps.length} 步），下面的断言会空转`);
   assert.match(text, /uses:\s*actions\/checkout@/, '缺少检出步骤');
   assert.match(text, /uses:\s*actions\/setup-node@/, '缺少装 Node 步骤');
   assert.match(text, /node-version:\s*'22'/, '没有装本项目要求的 Node 22');
-  assert.match(text, /^ {8}run: npm run collect$/m, '没有跑 npm run collect');
+  const collectStep = steps.find((s) => /npm run collect$|npm run collect\s*$/m.test(s.body) && !/--offline/.test(s.body));
+  assert.ok(collectStep !== undefined, '没有任何一步在跑 npm run collect（不是 collect:offline 的那一步）');
   // 额度：token 必须真的传给采集（client.mjs 的 token 选项只从 env.GITHUB_TOKEN 来）。
   assert.match(text, /GITHUB_TOKEN:\s*\$\{\{\s*secrets\.GITHUB_TOKEN\s*\}\}/, '没有把 GITHUB_TOKEN 传给采集');
   // 提交：public/data 与 data/ 都在 .gitignore 里，不用 -f 就会静默提交一个空站。
@@ -159,6 +195,36 @@ test('R134：可选的每日工作流存在，且真的能采集并提交回仓�
   assert.match(text, /run: \|\n/, '多行命令必须写成字面块');
   // 不许把真的令牌写进仓库（只许 ${{ secrets.X }} 引用）。
   assert.ok(!/ghp_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}/.test(text), '工作流里像是写了真的令牌');
+});
+
+test('R138：烟雾测试写下的样本数据，必须在真正采集之前被清掉', () => {
+  const text = read(WORKFLOW);
+  const steps = workflowSteps(text);
+  const smoke = steps.findIndex((s) => /npm run collect:offline/.test(s.body));
+  const clean = steps.findIndex((s) => /git clean -Xfd/.test(s.body));
+  const online = steps.findIndex((s) => /npm run collect$/m.test(s.body) && !/--offline/.test(s.body));
+  const commit = steps.findIndex((s) => /git add -f public\/data daily/.test(s.body));
+  assert.ok(smoke > -1, '找不到烟雾测试那一步');
+  assert.ok(clean > -1, '找不到"清掉烟雾测试写下的样本数据"那一步——这一步是这条工作流诚实的唯一保障');
+  assert.ok(online > -1, '找不到联网采集那一步');
+  assert.ok(commit > -1, '找不到提交那一步');
+  // 顺序就是这条修复的核心：烟雾测试 → 清掉样本 → 联网采集 → 提交。
+  assert.ok(smoke < clean, '清样本必须在烟雾测试之后（否则烟雾测试又把样本写回去了）');
+  assert.ok(clean < online, '清样本必须在联网采集之前（否则样本会被一起提交）');
+  assert.ok(online < commit, '提交必须在联网采集之后');
+  // 清那一步必须在烟雾测试失败时也跑（它失败之前就已经把样本写到盘上了）。
+  assert.match(steps[clean].body, /if:\s*always\(\)/, '清样本那一步要写成 if: always()，失败路径也要清');
+  // 清的方式必须是"只删被忽略的文件"：`rm -rf public/data daily` 会把**已经提交过**的真实数据
+  // 一并删掉，于是这一次提交就把历史数据整批抹掉（实测过：那会让 5 个已跟踪文件全部变成 D）。
+  // 只在**真正会被执行的那些行**上查（注释里出现这个词是解释为什么不那么做，不算违规）。
+  assert.ok(!/rm -rf public\/data/.test(shellLines(text).join('\n')),
+    '不许在会执行的命令里用 rm -rf public/data——它会连已提交的数据一起删掉');
+  assert.match(steps[clean].body, /-X/, 'git clean 必须带 -X（只删被忽略的文件），否则会波及已跟踪的数据');
+  // 注释必须与事实一致：`collect:offline` **确实**会写 public/data 与 daily（它们写着 demo: true），
+  // 第一版那句"它写的是临时目录，碰不到 public/data"是假的，还和 README/手册互相矛盾。
+  assert.ok(!/它写的是临时目录，碰不到/.test(text), '工作流里还留着"写的是临时目录"那句假注释');
+  assert.match(text, /demo: true/, '注释要说清它写下的是带 demo: true 的样本数据');
+  assert.match(text, /同一批路径|DEFAULT_DATA_DIR/, '注释要指出它与联网采集写的是同一批路径');
 });
 
 test('R134：文档与页面都如实说清这个工作流只在哪里生效、默认不跑', () => {
@@ -336,13 +402,95 @@ test('面向新手的正文不许出现行话（技术章节可以，但要逐�
 
 test('R132：口径页第三级讲的是 7 天前那份逐日快照，不是月度归档', () => {
   const text = read(ABOUT).replace(/<!--[\s\S]*?-->/g, '');
-  const at = text.indexOf('归档快照');
-  assert.ok(at > -1, '口径页应保留「归档快照」这一级的说法');
-  // 紧挨着这一级的那句话必须把"相隔 7 天"说清楚：读的就是 7 天前的那份当天快照。
-  const around = text.slice(Math.max(0, at - 200), at + 200);
-  assert.match(around, /7 天前/, '第三级必须说清读的是 7 天前的那一份');
-  assert.ok(!/每月归档/.test(around), '第三级不许再谎称用的是每月归档');
-  // 归档文件要照实说：写出来了，但现在没有任何代码读它。
+  // R141：锚点必须定在**第三级自己**身上。第一版拿 `indexOf('归档快照')` 取位置，取到的是这一节
+  // 末尾那句说明（它在第三级**之后**），于是"第三级必须说清 7 天前"实际上在检查别处的文字，
+  // 而 `!/每月归档/` 这条反向钉子也就永远为真——把原来那句假话放回去也照样绿。
+  const rungs = text.split('\n');
+  const rung3 = rungs.find((line) => line.includes('<li><strong>实测</strong>：当前收藏人数'));
+  assert.ok(rung3 !== undefined, '口径页缺了第三级（「实测：当前收藏人数减去 7 天前…」）');
+  assert.match(rung3, /7 天前/, '第三级必须说清读的是 7 天前的那一份');
+  assert.ok(!/每月归档|月度归档/.test(rung3), `第三级不许谎称用的是每月归档：${rung3.trim()}`);
+  assert.ok(!/隔得更久/.test(rung3), '第三级不许再声称"两次快照之间隔得更久"（它与第一级间隔相同）');
+  // 反向锚点的证明：第三级这一行必须与它**后面**那一级分得开（否则上面那条反向钉子还是空转）。
+  const rung4 = rungs.find((line) => line.includes('约 N（估算）'));
+  assert.ok(rung4 !== undefined && rung4 !== rung3, '第三级与第四级必须是两行、各说各的');
+  assert.match(rung4, /估算/, '第四级仍然是估算那一条');
+  // 归档文件要照实说：写出来了，但现在没有任何代码读它（这句在第三级的括号里）。
   assert.match(text, /归档/, '口径页要提到那份归档文件');
   assert.match(text, /还没有被读取|没有被读取|没有任何代码读|暂时没有|留着/, '归档文件必须照实说明现在没人读');
+});
+
+// ---------- R139 / R140 / R142：README 与手册里那几句"手抄"的话也要能被核对 ----------
+
+test('R139：文档教用户改 .gitignore 时，用的必须是文件里真实存在的那一行', () => {  const ignore = read('.gitignore');
+  const lines = ignore.split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#'));
+  assert.ok(lines.includes('data/'), `.gitignore 里应当有一行就是 data/，实际是：${lines.join(' / ')}`);
+  assert.ok(!lines.includes('/data/'), '这条断言的前提变了：.gitignore 里现在有带前导斜杠的那一行');
+  for (const file of [README, MANUAL]) {
+    const text = read(file);
+    if (!/\.gitignore/.test(text)) continue;
+    // 照着文档改的人必须能找到那一行：文档里要出现 `data/` 这个真实的行，
+    // 而且不许把不存在的那一行（带前导斜杠）当成事实写出来。
+    assert.ok(!/把里面的 `\/data\/` 改成|把 `\/data\/` 改成|`\/data\/` 改成只忽略/.test(text),
+      `${file} 让用户改一个 .gitignore 里不存在的行（/data/）`);
+    assert.match(text, /data\/` 改成只忽略|`data\/`\s*→|把 `data\/` /, `${file} 要用真实存在的那一行（data/）来说明怎么改`);
+  }
+});
+
+test('R140：README 里那张手抄的权重表同样与 weights.mjs 一致', () => {
+  const text = read(README);
+  // 三轴表：三行里各自的数字。
+  for (const [axis, value] of [['热度', WEIGHTS.hot], ['口碑', WEIGHTS.reputation], ['新手友好', WEIGHTS.runnable]]) {
+    const row = text.split('\n').find((line) => line.includes(`**${axis}**`) && line.startsWith('|'));
+    assert.ok(row !== undefined, `README 三轴表缺了「${axis}」那一行`);
+    assert.match(row, new RegExp(`\\|\\s*${value}\\s*\\|`), `README「${axis}」的满分与 weights.mjs（${value}）不一致：${row.trim()}`);
+  }
+  // 热度的参考值。
+  const hotRow = text.split('\n').find((line) => line.startsWith('|') && line.includes('**热度**'));
+  assert.match(hotRow, valuePattern(HOT_REFERENCE_STARS_PER_WEEK), `README 热度那一行缺少 ${HOT_REFERENCE_STARS_PER_WEEK} 这个参考值`);
+  // 安装七档：分值必须紧跟在对应说法后面（对调 16/14 必须被抓到）。
+  // 先定位到**写着这七档的那一行**，否则 `indexOf('一条命令')` 会先撞上别的句子
+  // （第一版就是这么错的：它撞上了"一条命令是什么、按不按回车"，于是断言在测别处的文字）。
+  const tierLine = text.split('\n').find((line) => line.includes('安装方式越简单分越高'));
+  assert.ok(tierLine !== undefined, 'README 里找不到写着安装分档的那一行');
+  const tiers = [
+    ['Windows 安装包', RUNNABLE_POINTS.releaseWindows],
+    ['一条命令', RUNNABLE_POINTS.npmBinWin],
+    ['Python', RUNNABLE_POINTS.pypiCompatible],
+    ['Node', RUNNABLE_POINTS.npmNoBin],
+    ['编译', RUNNABLE_POINTS.buildFromSource],
+    ['容器', RUNNABLE_POINTS.dockerOnly],
+    ['找不到安装方式', RUNNABLE_POINTS.none],
+  ];
+  for (const [phrase, value] of tiers) {
+    const at = tierLine.indexOf(phrase);
+    assert.ok(at > -1, `README 的安装分档缺了「${phrase}」这一档`);
+    const nearby = tierLine.slice(at, at + 26);
+    assert.match(nearby, valuePattern(value), `README 里「${phrase}」后面跟的分值不是 ${value}（附近：${nearby}）`);
+  }
+  // 中文文档那一项是 7 分，而且必须说清它是"全给 7 或 0"（不是按比例）。
+  const chineseTotal = CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile;
+  assert.equal(chineseTotal, 7, '中文说明那一项的合计变了，README 要跟着改');
+  assert.match(text, new RegExp(`${chineseTotal} 分`), `README 要写出中文文档那一项的 ${chineseTotal} 分`);
+  assert.ok(!/中文再给最多 7 分|按比例给/.test(text), 'README 不许把"全给 7 或 0"说成按比例给分');
+});
+
+test('R142：README 里那三句容易读错的话与代码一致', () => {
+  const text = read(README);
+  // ① git status：被忽略的目录 git 根本不会列出来。事实是"git status 不会显示它们（要用 git add -f）"。
+  assert.ok(!/只有 `daily\/` 会出现在 `git status` 里/.test(text),
+    'README 还在说只有 daily/ 会出现在 git status 里（这句容易被读成 public/data 会显示）');
+  assert.match(text, /`git status` 不会显示/, 'README 要照实说被忽略的那些文件 git status 不显示');
+  assert.match(text, /git add -f/, 'README 要给出把它们加进仓库的正确做法');
+  // ② 工作流是当次就提交，不是"第二天才有内容"。
+  assert.ok(!/第二天就有内容/.test(text), 'README 给了工作流一个它没有的延迟（它是当次提交）');
+  assert.match(text, /当次|这一次就会提交|跑完这一次/, 'README 要照实说工作流跑完这一次就会提交');
+  // ③ 中文文档分是全给 7 或 0，不是按比例（与 R140 同一条事实，这里再钉一次说法）。
+  assert.ok(!/中文再给最多 7 分/.test(text), 'README 不许说"中文再给最多 7 分"（那是按比例的说法）');
+  // ④ 门槛的条数：独立门槛是五条，"资料清单"那一条只是门槛 5 的子集、不新增排除。
+  // 手册改了条数就得全篇一致（经典榜那一节原先把"上面那六条门槛"当成事实，与这一节自相矛盾）。
+  assert.match(text, /这五条|五条同时成立|不是第六道独立的门槛/, 'README 要说清独立门槛是五条、资料清单不是第六条');
+  const manual = read(MANUAL);
+  assert.match(manual, /这五条\*\*同时\*\*成立/, '手册要说清独立门槛是五条');
+  assert.ok(!/上面那六条门槛/.test(manual), '手册里还留着"上面那六条门槛"（与它自己写着的五条矛盾）');
 });

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildBoard } from '../src/boards/build.mjs';
 import { BOARD_SIZES } from '../src/config/weights.mjs';
+import { passesGates } from '../src/score/score.mjs';
 import candidates from '../fixtures/candidates.json' with { type: 'json' };
 
 const NOW = new Date('2026-10-10T00:00:00Z');
@@ -29,6 +30,45 @@ test('纯清单类被门槛挡在新手榜外，但仍进经典榜', () => {
   // 一起挡下的，不是被"新手榜专属过滤器"挡下的——代码里没有那样的过滤器。
   assert.ok(!newbie.includes('awesome/list-only'));
   assert.ok(classic.includes('awesome/list-only'));
+});
+
+test('R142：资料清单那一条不新增任何排除（它不会让多一个项目落榜）', () => {
+  // 文档（README 与手册）现在写的是"五条门槛 + 资料清单只是给同一批被挡下的项目一个更准确的说明"。
+  // 这条断言把这个说法钉在代码上。注意 passesGates 是**把所有不通过的原因都列出来**、不短路，
+  // 所以"资料清单"那句会与"没有已核实的安装方式"同时出现——那正是"更准确的说明"的意思。
+  // 真正要证明的是：**它不会让多一个项目落榜**。
+  const base = {
+    name: 'x', stars: 5000, forks: 100, language: null,
+    license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false,
+  };
+  const cases = [
+    // 除安装方式外全都合格：三个都只因为"没有已核实的安装方式"被挡。
+    { repo: { ...base, ownerRepo: 'a/none-kind' }, runnability: { kind: 'none', verified: true } },
+    { repo: { ...base, ownerRepo: 'b/unverified' }, runnability: { kind: 'releaseWindows', verified: false } },
+    { repo: { ...base, ownerRepo: 'c/unknown-kind' }, runnability: { kind: 'something-new', verified: true } },
+    // 语言不是 Markdown 的同一批：证明"语言"本身不参与判据（判据要的是"语言空/Markdown **且**没有安装方式"）。
+    { repo: { ...base, ownerRepo: 'd/none-with-lang', language: 'Go' }, runnability: { kind: 'none', verified: true } },
+  ];
+  for (const c of cases) {
+    const verdict = passesGates(c.repo, c.runnability, NOW);
+    assert.equal(verdict.ok, false, `${c.repo.ownerRepo} 应当被挡下`);
+    assert.ok(verdict.reasons.includes('没有已核实的安装方式'), `${c.repo.ownerRepo} 应当因为门槛 5 被挡下`);
+    // "资料清单"那句只允许出现在**已经**因为门槛 5 被挡下的候选身上。
+    if (verdict.reasons.includes('这是资料清单，不是能装的软件')) {
+      assert.ok(verdict.reasons.includes('没有已核实的安装方式'),
+        `${c.repo.ownerRepo} 被"资料清单"单独挡下了——那它就不再是门槛 5 的子集，文档的说法要跟着改`);
+      assert.ok(!c.repo.language || c.repo.language === 'Markdown',
+        `${c.repo.ownerRepo} 的语言不是空/Markdown 却被判成资料清单`);
+    }
+  }
+  // 反向对照：真有安装方式的仓库，无论语言是不是 Markdown，都必须放行。
+  // （这一条同时证明"语言是 Markdown"本身不是门槛——否则上面那种"子集"的说法就不成立。）
+  const md = { ...base, ownerRepo: 'e/markdown-tool', language: 'Markdown' };
+  assert.equal(passesGates(md, { kind: 'npmBinWin', verified: true }, NOW).ok, true,
+    '有安装方式的 Markdown 仓库必须能进榜（否则"资料清单"就不只是门槛 5 的子集）');
+  const noLang = { ...base, ownerRepo: 'f/no-lang-exe', language: null };
+  assert.equal(passesGates(noLang, { kind: 'releaseWindows', verified: true }, NOW).ok, true,
+    '没有标注语言但有安装包的仓库也必须能进榜');
 });
 
 test('新手榜按新手友好分降序', () => {

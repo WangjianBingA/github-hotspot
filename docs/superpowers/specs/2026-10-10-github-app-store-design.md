@@ -347,10 +347,12 @@ GitHub 不提供 star 历史；`/stargazers` 列表端点自 2026-06-30 起对�
 | 0 | `stargazers/history` 端点（**O1 已验证可用**） | `measured` | 新仓库 1 次；老仓库每 30 周 1 次 | **首选来源** |
 | 1 | 新项目：总收藏数即 7 日增量（`created ≤ 7d`） | `measured` | 0（发现候选时已有） | 7 天内新建项目 |
 | 2 | trending HTML 的 `starsThisWeek` | `reported` | **0 API 成本** | 恰在 trending 页上的项目 |
-| 3 | **历史 JSON 差值**（`public/data/history/*.json`） | `measured` | 0 | 连续追踪的项目，第 3 天起 |
+| 3 | **当天快照与 7 天前那一天快照的差值**（`public/data/YYYY-MM-DD.json`，读的是 7 天前那一天的当天文件） | `measured` | 0 | 连续追踪的项目，从第 8 天起 |
 | 4 | `/repos/{r}/events` 的 WatchEvent 速率外推 | `estimated` | 1 次 | 兜底 |
 
-**v2 变化**：级别 3 从"SQLite 快照差值"改为"读仓库里的历史 JSON 差值"。因为历史 JSON 会随采集提交进仓库，**在 GitHub Actions 的全新容器里也能读到**，这让它成为最稳的支柱，也让"越用越准"的故事公开可验证。
+**v2 变化**：级别 3 从"SQLite 快照差值"改为"读仓库里已经落盘的那些当天 JSON 的差值"——**读的是 7 天前那一天的那份当天文件**（`public/data/YYYY-MM-DD.json`，间隔正好 7 天）。因为数据文件会随采集提交进仓库，**在 GitHub Actions 的全新容器里也能读到**，这让它成为最稳的支柱，也让"越用越准"的故事公开可验证。
+
+**R132 更正（2026-10-11）**：本表原先写的是"历史 JSON 差值（`public/data/history/*.json`）"，那是**错的**。`history/YYYY-MM.json` 这个按月归档的文件只在采集时被 `appendHistory` 写入，**读它的 `readHistory` 没有任何生产调用者**（只有测试在用）——所以它不是级别 3 的来源，级别 3 读的是 7 天前那一天的那份当天文件。
 
 ### 7.3 界面必须诚实
 

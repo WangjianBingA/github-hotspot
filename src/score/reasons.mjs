@@ -71,8 +71,8 @@ export function formatVelocityText(velocity) {
 
 /**
  * 这个条目有没有"有本地化文档、但不是中文"这条事实（R143）。
- * 判据取自 runnability.localizedFiles（由 classifyRunnability 从 detectChinese 的 localizedFiles 带出），
- * 而不是 chineseDoc/hasCjk —— 那两个字段一个已经改成"真有中文"、一个没有随条目走到底，
+ * 判据取自 runnability.localizedFiles（由 classifyRunnability 从 detectChinese 的 localizedFiles 带出）。
+ * 为什么不读 `hasCjk`：它压根不随条目走到这里；R153 之后连 `chineseDoc` 那个历史名也没有了。
  * 而 localizedFiles 是**文件名清单**，本身就是"有非中文本地化文档"的直接证据。
  * @param {{ localizedFiles?: unknown }} [run]
  * @returns {boolean}

@@ -39,7 +39,7 @@ export const RUNNABLE_POINTS = {
 // 且不是假名主导）。**不是** hasCjk —— 那个更宽的信号含着假名与谚文，只有 README.ja.md 的项目
 // 会因此白拿这 7 分，而这条轴、口径页、README、手册都把它叫「中文说明」。
 // readmeRatio / localizedFile 是**同一件事的两种证据**（满足其一就给满，见 scoreRunnable 的
-// `chineseDoc === true ? 两者之和 : 0`），留在这里是为了让"7 分怎么来的"可查。
+// `hasChinese === true ? 两者之和 : 0`），留在这里是为了让"7 分怎么来的"可查。
 export const CHINESE_POINTS = { readmeRatio: 4, localizedFile: 3 };
 
 // 判定"有本地化文档/有中文"的字符占比阈值（实测校准：HelloGitHub 5.35% 命中，markitdown 0% 排除）。

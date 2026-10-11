@@ -15,7 +15,6 @@
     "runnability": {
       "kind": "pypiCompatible",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -42,7 +41,6 @@
     "runnability": {
       "kind": "pypiCompatible",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -69,7 +67,6 @@
     "runnability": {
       "kind": "pypiCompatible",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -96,7 +93,6 @@
     "runnability": {
       "kind": "releaseWindows",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -123,7 +119,6 @@
     "runnability": {
       "kind": "pypiCompatible",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -150,7 +145,6 @@
     "runnability": {
       "kind": "releaseWindows",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -177,7 +171,6 @@
     "runnability": {
       "kind": "releaseWindows",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -204,7 +197,6 @@
     "runnability": {
       "kind": "npmBinWin",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -231,7 +223,6 @@
     "runnability": {
       "kind": "pypiCompatible",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -258,7 +249,6 @@
     "runnability": {
       "kind": "pypiCompatible",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -285,7 +275,6 @@
     "runnability": {
       "kind": "releaseWindows",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -312,7 +301,6 @@
     "runnability": {
       "kind": "buildFromSource",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -339,7 +327,6 @@
     "runnability": {
       "kind": "npmNoBin",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -366,7 +353,6 @@
     "runnability": {
       "kind": "pypiCompatible",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -393,7 +379,6 @@
     "runnability": {
       "kind": "npmNoBin",
       "verified": true,
-      "chineseDoc": false,
       "hasChinese": false
     },
     "velocity": {
@@ -420,7 +405,6 @@
     "runnability": {
       "kind": "npmNoBin",
       "verified": true,
-      "chineseDoc": false,
       "hasChinese": false
     },
     "velocity": {
@@ -447,7 +431,6 @@
     "runnability": {
       "kind": "npmNoBin",
       "verified": true,
-      "chineseDoc": false,
       "hasChinese": false
     },
     "velocity": {
@@ -474,7 +457,6 @@
     "runnability": {
       "kind": "npmNoBin",
       "verified": true,
-      "chineseDoc": false,
       "hasChinese": false
     },
     "velocity": {
@@ -501,7 +483,6 @@
     "runnability": {
       "kind": "pypiCompatible",
       "verified": true,
-      "chineseDoc": false,
       "hasChinese": false
     },
     "velocity": {
@@ -528,7 +509,6 @@
     "runnability": {
       "kind": "pypiCompatible",
       "verified": true,
-      "chineseDoc": false,
       "hasChinese": false
     },
     "velocity": {
@@ -555,7 +535,6 @@
     "runnability": {
       "kind": "buildFromSource",
       "verified": true,
-      "chineseDoc": false,
       "hasChinese": false
     },
     "velocity": {
@@ -582,7 +561,6 @@
     "runnability": {
       "kind": "dockerOnly",
       "verified": true,
-      "chineseDoc": false,
       "hasChinese": false
     },
     "velocity": {
@@ -609,7 +587,6 @@
     "runnability": {
       "kind": "dockerOnly",
       "verified": true,
-      "chineseDoc": false,
       "hasChinese": false
     },
     "velocity": {
@@ -636,7 +613,6 @@
     "runnability": {
       "kind": "releaseWindows",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -661,7 +637,6 @@
     "runnability": {
       "kind": "npmBinWin",
       "verified": true,
-      "chineseDoc": false,
       "hasChinese": false
     },
     "velocity": {
@@ -688,7 +663,6 @@
     "runnability": {
       "kind": "npmBinWin",
       "verified": false,
-      "chineseDoc": false,
       "hasChinese": false
     },
     "velocity": {
@@ -715,7 +689,6 @@
     "runnability": {
       "kind": "pypiCompatible",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true
     },
     "velocity": {
@@ -742,8 +715,10 @@
     "runnability": {
       "kind": "none",
       "verified": false,
-      "chineseDoc": false,
-      "hasChinese": false
+      "hasChinese": false,
+      "notes": [
+        "这个项目只是一份资料清单，本身不提供可以安装运行的软件，所以我们没有给你任何命令。"
+      ]
     },
     "velocity": {
       "gained7d": 0,
@@ -769,7 +744,6 @@
     "runnability": {
       "kind": "pypiCompatible",
       "verified": true,
-      "chineseDoc": true,
       "hasChinese": true,
       "localizedFiles": [
         "README.zh-CN.md"
@@ -799,7 +773,6 @@
     "runnability": {
       "kind": "npmBinWin",
       "verified": true,
-      "chineseDoc": false,
       "hasChinese": false,
       "localizedFiles": [
         "README.ja.md"

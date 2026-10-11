@@ -16,7 +16,6 @@ import { detectChinese } from '../src/enrich/readme.mjs';
 import { scoreRepo } from '../src/score/score.mjs';
 import { buildReasons } from '../src/score/reasons.mjs';
 import { CHINESE_POINTS, RUNNABLE_POINTS } from '../src/config/weights.mjs';
-import { DETAIL_WEIGHTS } from '../src/config/weights.mjs';
 
 // ---------- 以下是简报钉住的 8 个用例，原样保留、不做任何削弱 ----------
 
@@ -85,7 +84,7 @@ test('安装向导固定 3 步，步骤含命令与常见问题', () => {
 
 test('Windows 安装包的第 2 步给下载链接而不是命令', () => {
   const g = buildInstallGuide({ kind:'releaseWindows', verified:true, difficulty:'green',
-    downloadUrl:'https://x/a.exe', command:null, chineseDoc:false, notes:[] });
+    downloadUrl:'https://x/a.exe', command:null, hasChinese:false, notes:[] });
   assert.match(g.steps[1].body + (g.steps[1].downloadUrl || ''), /https:\/\/x\/a\.exe/);
 });
 
@@ -184,12 +183,13 @@ test('R48：拿不到 Python 版本要求时同样不猜，只说实话', () => 
   assert.doesNotMatch(stringsOf(r).join('\n'), /兼容/);
 });
 
-test('R143：只有非中文本地化文档时，chineseDoc 与 hasChinese 都为 false（不给中文的分、也不给徽章）', () => {
+test('R143 + R153：只有非中文本地化文档时，hasChinese 为 false（不给中文的分、也不给徽章）', () => {
   const r = classifyRunnability({ chinese:{ hasCjk:true, hasChinese:false, localizedFiles:['README.ja.md'] } });
   // R143（修订 R64）：计分口径从 hasCjk 改成 hasChinese —— 这条轴叫「中文说明」，
   // 只有 README.ja.md 的项目不该拿到中文文档的 7 分，也不该在卡片上挂中文徽章。
-  assert.equal(r.chineseDoc, false);
+  // R153：连历史名 chineseDoc 都删了，所以这里也顺便钉住"它不再存在"。
   assert.equal(r.hasChinese, false);
+  assert.ok(!('chineseDoc' in r), 'R153：分类结果里不该再有 chineseDoc 这个历史名');
   assert.deepEqual(r.localizedFiles, ['README.ja.md']);
   assert.ok(r.notes.some(n => n.includes('非中文')));
 });
@@ -201,9 +201,8 @@ test('R64：向导说的是「有本地化文档（非中文）」，一个字�
   assert.doesNotMatch(text, /有中文说明/);
 });
 
-test('R64：真有中文时，chineseDoc 与 hasChinese 都给肯定，也不说"非中文"', () => {
+test('R64 + R153：真有中文时 hasChinese 为 true，也不说"非中文"', () => {
   const r = classifyRunnability({ chinese:{ hasCjk:true, hasChinese:true, localizedFiles:['README.zh-CN.md'] } });
-  assert.equal(r.chineseDoc, true);
   assert.equal(r.hasChinese, true);
   const text = stringsOf(buildInstallGuide(r)).join('\n');
   assert.match(text, /有中文说明/);
@@ -220,7 +219,6 @@ test('R71：没有中文时只说"我们没有查到中文说明"，不宣称项
   ];
   for (const { label, chinese } of inputs) {
     const r = classifyRunnability({ releases:null, npm:null, pypi:null, chinese });
-    assert.equal(r.chineseDoc, false, label);
     assert.equal(r.hasChinese, false, label);
     const g = buildInstallGuide(r);
     const text = stringsOf(g).join('\n');
@@ -388,16 +386,20 @@ test('R143：日文的 runnability 与中文的 runnability 分差正好是中�
   const ja = make({ hasCjk: true, hasChinese: false, localizedFiles: ['README.ja.md'] });
   const zh = make({ hasCjk: true, hasChinese: true, localizedFiles: ['README.zh-CN.md'] });
   assert.equal(zh.parts.chinese - ja.parts.chinese, CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile);
-  assert.equal(zh.parts.chinese - ja.parts.chinese, CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile);
   // 口碑轴不受影响（同一份 repo 事实），所以总分差也正好是那一项。
   assert.equal(zh.total - ja.total, CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile);
-  // 前提检查：分数真的算出来了（否则上面的差可能是 0 - 0）。
-  assert.ok(ja.parts.chinese + ja.parts.installPath + DETAIL_WEIGHTS.forkRatio > 0, '这条断言的前提是分数真的算出来了');
+  // R154：前提检查必须**真的有鉴别力**。原来写的是
+  // `ja.parts.chinese + ja.parts.installPath + DETAIL_WEIGHTS.forkRatio > 0`——
+  // installPath 恒为 18，所以它恒真，根本防不住"两边都是 0、差也是 0"那种退化。
+  // 现在直接钉住两边各自的安装路径分，以及"日文那边中文分确实是 0"。
+  assert.equal(ja.parts.installPath, RUNNABLE_POINTS.releaseWindows, '两边走的是同一条安装路径，安装分必须相同');
+  assert.equal(zh.parts.installPath, RUNNABLE_POINTS.releaseWindows);
+  assert.equal(ja.parts.chinese, 0, '日文那一边的中文分必须是 0');
+  assert.equal(zh.parts.chinese, CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile, '中文那一边必须是满 7 分');
 });
 
-test('chinese 整个缺失时两个中文结论都为 false，localizedFiles 为空数组', () => {
+test('chinese 整个缺失时中文结论为 false，localizedFiles 为空数组', () => {
   const r = classifyRunnability({ pypi:{ packageName:'x', version:'1.0.0', requiresPython:null, repoMatches:true } });
-  assert.equal(r.chineseDoc, false);
   assert.equal(r.hasChinese, false);
   assert.deepEqual(r.localizedFiles, []);
 });
@@ -479,8 +481,8 @@ test('非法或空输入一律落到 none，不抛错', () => {
     assert.equal(r.downloadUrl, null);
     assert.equal(r.evidence, null);
     assert.equal(r.difficulty, 'red');
-    assert.equal(r.chineseDoc, false);
     assert.equal(r.hasChinese, false);
+    assert.ok(!('chineseDoc' in r), 'R153：非法输入的结果里也不该有 chineseDoc');
     assert.deepEqual(r.localizedFiles, []);
     assert.ok(Array.isArray(r.notes));
   }

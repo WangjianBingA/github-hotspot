@@ -116,8 +116,8 @@ test('R128：离线采集写进数据目录的每一天都带 demo 标记，清�
 test('R26 经典榜只排 discover 单独给出的经典池，不混入周榜候选', async () => {
   const d = dir();
   const classic = [
-    { repo: { ownerRepo: 'classic/one', name: 'one', stars: 300000, forks: 100, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: false, chineseDoc: false } },
-    { repo: { ownerRepo: 'classic/two', name: 'two', stars: 250000, forks: 90, language: 'Rust', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: false, chineseDoc: false } },
+    { repo: { ownerRepo: 'classic/one', name: 'one', stars: 300000, forks: 100, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: false, hasChinese: false } },
+    { repo: { ownerRepo: 'classic/two', name: 'two', stars: 250000, forks: 90, language: 'Rust', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: false, hasChinese: false } },
   ];
   const r = await runCollect({
     dataDir: d, offline: true, now: NOW,
@@ -149,10 +149,10 @@ test('R26 经典池拿不到时退化为候选池，但必须标 degraded', asyn
 test('R33 额度耗尽时立刻停止富化并标记 degraded', async () => {
   const d = dir();
   const pool = [
-    { repo: { ownerRepo: 'e/one', stars: 1000, forks: 10, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: true, chineseDoc: false }, extra: { growing: false } },
-    { repo: { ownerRepo: 'e/two', stars: 900, forks: 9, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: true, chineseDoc: false }, extra: { growing: false } },
-    { repo: { ownerRepo: 'e/three', stars: 800, forks: 8, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: true, chineseDoc: false }, extra: { growing: false } },
-    { repo: { ownerRepo: 'e/four', stars: 700, forks: 7, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: true, chineseDoc: false }, extra: { growing: false } },
+    { repo: { ownerRepo: 'e/one', stars: 1000, forks: 10, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: true, hasChinese: false }, extra: { growing: false } },
+    { repo: { ownerRepo: 'e/two', stars: 900, forks: 9, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: true, hasChinese: false }, extra: { growing: false } },
+    { repo: { ownerRepo: 'e/three', stars: 800, forks: 8, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: true, hasChinese: false }, extra: { growing: false } },
+    { repo: { ownerRepo: 'e/four', stars: 700, forks: 7, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: true, hasChinese: false }, extra: { growing: false } },
   ];
   let enriched = 0;
   const r = await runCollect({
@@ -216,7 +216,7 @@ test('R53 免费级先跑完且一分额度都不花，预算留给争榜候选'
       license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false, defaultBranch: 'main',
     },
     // npmBinWin(16) 是"已核实的安装路径"，两个候选都能过门槛、都在争名次。
-    runnability: { kind: 'npmBinWin', verified: true, chineseDoc: false },
+    runnability: { kind: 'npmBinWin', verified: true, hasChinese: false },
     extra: { growing: false },
   });
   const pool = [mk('free/first', 9000), mk('free/second', 8000)];
@@ -314,7 +314,7 @@ test('R41 "没问到"必须标 degraded，而不是静默当成"没有"', async 
     sources: {
       discover: async () => ([{
         repo: { ownerRepo: 'x/y', stars: 1000, forks: 10, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false },
-        runnability: { kind: 'npmBinWin', verified: true, chineseDoc: false },
+        runnability: { kind: 'npmBinWin', verified: true, hasChinese: false },
       }]),
       enrich: async (c) => c,
     },
@@ -343,14 +343,14 @@ test('R41 明确 false 不等于"没问到"：确认没有发版时不得标 deg
       discover: async () => ({
         candidates: [{
           repo: { ownerRepo: 'x/y', stars: 1000, forks: 10, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false, hasRelease90d: false },
-          runnability: { kind: 'none', verified: true, chineseDoc: false },
+          runnability: { kind: 'none', verified: true, hasChinese: false },
           extra: { growing: false },
         }],
         // 给一份**合法的**经典池：R87 之后空池会（正确地）记一条"经典榜只能用候选池"的警告，
         // 而这条用例要断言"整轮一条警告都没有"，不能让它被一条空池噪声带走。
         classic: async () => [{
           repo: { ownerRepo: 'classic/one', name: 'one', stars: 300000, forks: 100, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false },
-          runnability: { kind: 'none', verified: false, chineseDoc: false },
+          runnability: { kind: 'none', verified: false, hasChinese: false },
         }],
       }),
       enrich: async (c) => c,
@@ -371,7 +371,6 @@ test('R78 每条 item 的 install 里都带着生成好的 steps 与 faq', async
       assert.equal(item.install.steps.length, 3, `${item.ownerRepo} 的三步向导`);
       assert.ok(item.install.steps[1].command || item.install.steps[1].downloadUrl || item.install.steps[1].body);
       assert.ok(item.install.faq.length >= 3, `${item.ownerRepo} 的常见问题`);
-      assert.equal(item.install.chineseDoc, item.chineseDoc);
       assert.equal(item.install.hasChinese, item.hasChinese);
     }
   }
@@ -453,11 +452,11 @@ test('R80 只有经典池候选"没问到"时不得降级（该榜不展示三�
   const d = dir();
   const classic = [
     // 经典榜候选走轻富化：没人问过它 release，也没有历史 → 两个三态字段都是"没问到"。
-    { repo: { ownerRepo: 'classic/one', name: 'one', stars: 300000, forks: 100, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: false, chineseDoc: false } },
+    { repo: { ownerRepo: 'classic/one', name: 'one', stars: 300000, forks: 100, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'none', verified: false, hasChinese: false } },
   ];
   const pool = [
     // 周榜候选把两个字段都**明确问到**了，好让这条断言只针对"经典池未问到"这一个原因。
-    { repo: { ownerRepo: 'fine/one', stars: 2000, forks: 50, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false, hasRelease90d: false }, runnability: { kind: 'npmBinWin', verified: true, chineseDoc: false }, extra: { growing: false } },
+    { repo: { ownerRepo: 'fine/one', stars: 2000, forks: 50, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false, hasRelease90d: false }, runnability: { kind: 'npmBinWin', verified: true, hasChinese: false }, extra: { growing: false } },
   ];
   const r = await runCollect({
     dataDir: d, offline: true, now: NOW,
@@ -483,7 +482,7 @@ test('R80 weekly/newbie 的候选"没问到"时仍然必须降级（收窄审计
     sources: {
       discover: async () => ({ candidates: [
         // 有已核实安装路径，因此真能进周榜/新手榜；但两个三态字段都没问到。
-        { repo: { ownerRepo: 'hot/one', stars: 2000, forks: 50, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'npmBinWin', verified: true, chineseDoc: false } },
+        { repo: { ownerRepo: 'hot/one', stars: 2000, forks: 50, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false }, runnability: { kind: 'npmBinWin', verified: true, hasChinese: false } },
       ], classic: async () => [] }),
       enrich: async (c) => c,
     },
@@ -540,12 +539,12 @@ test('R84a 同一仓库在两池各有一份、只有经典那份"没问到" →
         // 会拿这一份去审计周榜，于是点名一个所有被展示条目其实都产出了的字段。
         candidates: [{
           repo: { ownerRepo: 'dup/repo', stars: 5000, forks: 200, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false, hasRelease90d: false },
-          runnability: { kind: 'npmBinWin', verified: true, chineseDoc: false },
+          runnability: { kind: 'npmBinWin', verified: true, hasChinese: false },
           extra: { growing: false },
         }],
         classic: async () => [{
           repo: { ownerRepo: 'dup/repo', name: 'repo', stars: 300000, forks: 100, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false },
-          runnability: { kind: 'none', verified: false, chineseDoc: false },
+          runnability: { kind: 'none', verified: false, hasChinese: false },
         }],
       }),
       enrich: async (c) => c,
@@ -592,7 +591,7 @@ test('R92 复用的候选不重新富化：昨日那份三态值必须原样保�
       rank: 1, ownerRepo: 'keep/one', stars: 4321, forks: 100, language: 'Go', license: 'MIT',
       hasRelease90d: true, growing: false,
       repo: { ownerRepo: 'keep/one', name: 'one', stars: 4321, forks: 100, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false },
-      runnability: { kind: 'npmBinWin', verified: true, chineseDoc: false },
+      runnability: { kind: 'npmBinWin', verified: true, hasChinese: false },
       velocity: { gained7d: 777, gained3d: null, level: 2, confidence: 'reported', source: 'trending' },
       scores: { hot: 30, reputation: 20, runnable: 16, total: 66 },
       reasons: ['这一条来自昨日榜单'],
@@ -651,7 +650,7 @@ test('R85 日报 Markdown 里确实出现安装命令或下载链接（与 JSON 
   // 没有 command，而 R85 要验证的正是"命令/下载链接能走到日报里"。
   const pool = [{
     repo: { ownerRepo: 'cmd/one', name: 'one', description: '带命令的示例项目', language: 'Go', stars: 3000, forks: 100, license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false },
-    runnability: { kind: 'npmBinWin', command: 'npx cmd-one', verified: true, chineseDoc: false },
+    runnability: { kind: 'npmBinWin', command: 'npx cmd-one', verified: true, hasChinese: false },
     extra: { growing: false },
   }];
   const r = await runCollect({
@@ -686,7 +685,7 @@ test('R86 经典池不花计费请求、额度留给付费速度：能跑出非�
   }));
   const classic = [{
     repo: { ownerRepo: 'classic/big', name: 'big', stars: 300000, forks: 100, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false },
-    runnability: { kind: 'none', verified: false, chineseDoc: false },
+    runnability: { kind: 'none', verified: false, hasChinese: false },
   }];
   const firstRepo = pool[0].repo.ownerRepo;
 
@@ -770,12 +769,12 @@ test('R87 能过门槛的经典池候选不得出现在 weekly/newbie，也不�
   const classic = [{
     // 这个经典候选**完全够格**上周榜（已核实安装路径 + 200+ 收藏 + 近期提交）。
     repo: { ownerRepo: 'classic/strong', name: 'strong', stars: 300000, forks: 5000, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false },
-    runnability: { kind: 'npmBinWin', verified: true, chineseDoc: false },
+    runnability: { kind: 'npmBinWin', verified: true, hasChinese: false },
     extra: { growing: false },
   }];
   const weeklyPool = [{
     repo: { ownerRepo: 'fresh/one', name: 'one', stars: 3000, forks: 100, language: 'Go', license: 'MIT', pushedAt: '2026-10-09T00:00:00Z', archived: false },
-    runnability: { kind: 'npmBinWin', verified: true, chineseDoc: false },
+    runnability: { kind: 'npmBinWin', verified: true, hasChinese: false },
     extra: { growing: false },
   }];
   const r = await runCollect({

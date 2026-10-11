@@ -248,7 +248,7 @@ github-hotspot/
           "confidence": "measured",           // measured | reported | estimated
           "velocityLevel": 1,
           "scores": { "hot": 38.2, "reputation": 24.1, "runnable": 25, "total": 87.3 },
-          "grade": "green", "chineseDoc": true,
+          "grade": "green", "hasChinese": true,
           "install": { "kind": "releaseWindows", "command": null,
                        "downloadUrl": "https://.../app-setup.exe",
                        "evidence": "release asset: app-setup.exe", "verified": true },
@@ -281,7 +281,7 @@ github-hotspot/
 |---|---|---|
 | **热度** | 45 | 7 日新增收藏，`log10` 归一化：`45 × min(1, log10(1+v) / log10(1+3000))` |
 | **口碑** | 30 | fork/star 比 8 + 近期提交活跃 8 + 近 90 天有发版 6 + 许可证齐全 4 + 收藏持续增长 4 |
-| **新手友好** | 25 | 安装路径 0-18 + 中文文档 0-7 |
+| **新手友好** | 25 | 安装路径 0-18 + 中文说明 0-7（R143 起按"真有中文"算，见下面的修订说明） |
 
 **口碑子项的确定性口径**（全部只用已获取字段，无需额外请求，可单测；五项之和 = 30 = `WEIGHTS.reputation`）
 
@@ -297,20 +297,39 @@ github-hotspot/
 >
 > **留作可改进空间**：若要恢复"作者管不管事"，可行的正确做法是每候选追加一次 `GET /search/issues?q=repo:{owner}/{repo}+type:issue+state:closed&per_page=1` 读 `total_count`——但它走 **search 额度（10 次/分钟）**，需为全部过门槛候选付费并有节奏地限速。当前判断：收益不抵成本，故不做。
 
-**新手友好子项**（v1 的"可落地分"更名，口径不变；安装路径 0-18 + 中文文档 0-7 = 25 = `WEIGHTS.runnable`）
+**新手友好子项**（v1 的"可落地分"更名，口径不变；安装路径 0-18 + 中文说明 0-7 = 25 = `WEIGHTS.runnable`）
 
 **安装路径分档（0-18）**：release 有 Windows 资产 18 / npm `bin`+`win32` 16 / PyPI 有包 14 / npm 无 `bin` 8 / 需自行编译 6 / 仅 Docker 4。
 
-**中文文档分**：README 中日韩字符占比 ≥ 3% → 4 分；另存在 `README.zh-CN.md` / `README_CN.md` / `docs/*.zh*` → 再 +3。
-（实测校准：HelloGitHub 5.35% 命中；markitdown 0% 正确排除；opencode 0.26% 但靠 `README.ja.md` 正确识别为有本地化文档。）
+**中文说明分（0-7，R143 修订）**：**要么 7 分、要么 0 分**。判据是 `hasChinese`：
+README 里**汉字**占比 ≥ 3%（且假名占比低于阈值），或存在**中文**文件名的本地化文件
+（`README.zh-CN.md` / `README_CN.md` / `README.zh.md` / `docs/*.zh*`），满足任一即给满 7 分。
+代码里的构成是"正文 4 分 + 本地化文件 3 分"（`CHINESE_POINTS`），但两者是同一件事的两种证据，
+所以对外只有 7 或 0 两档，不存在按比例加分。
+
+> **R143（2026-10-11）：这一项从 `hasCjk` 改成 `hasChinese` 计分。**
+> 旧口径是"README 中日韩字符占比 ≥3% → 4 分；另存在任意本地化文件 → 再 +3"，
+> 即**有意奖励"任何本地化"**（R59 原文）。它带来两个问题：
+> ① 只有 `README.ja.md` 的项目会拿到"中文说明"这 7 分，而这条轴、口径页、README、手册都把它叫「中文说明」；
+> ② `reasons.mjs` 用 `chineseDoc`(=`hasCjk`) 推出"有中文说明"，与同一条目的抽屉 FAQ（读 `hasChinese`）
+> 直接矛盾——已提交的演示数据里 174 个渲染位有 129 个同时命中。
+> 现在：计分、徽章、文案**统一**按 `hasChinese`；`hasCjk` 只用于如实说「有本地化文档（非中文）」。
+> 字段层面见 R153（删掉与 `hasChinese` 恒等的历史名 `chineseDoc`）。
+
+**（实测校准）**：HelloGitHub 汉字占比 5.35% 命中；markitdown 0% 正确排除；
+`sst/opencode` 正文 CJK 占比 0.26%（低于阈值）但仓库有 `README.ja.md` —— R143 之后它是
+`hasChinese: false`（**不给这 7 分、不给中文徽章**）、`hasCjk: true`（"有本地化文档"这条事实成立，
+界面照实说"有本地化文档（非中文）"）。
 
 > **R59（2026-10-10 补充）："有中文"与"有本地化"是两个不同的断言，徽章不得混用。**
-> 上面的**计分**口径有意奖励"任何本地化"（+3 给任意本地化文件；CJK 占比 ≥3% 给 4 分）——因为一个愿意为非英语用户写文档的项目值得加分。
-> 但界面上的徽章写的是「🈶 有中文说明」。若一个项目只有 `README.ja.md`（日文），却对中文新手宣称"有中文说明"，那就是一句**假话**，正是本项目反复修正的那类缺陷。
-> 因此检测必须同时产出两个布尔值：
-> - `hasCjk` —— **计分**输入：CJK 占比达标，或存在任意本地化文件。
-> - `hasChinese` —— **徽章**断言：确实有中文。判定为 `README.zh-CN.md` / `README_CN.md` / `README.zh.md` / `docs/*.zh*` 之一存在，**或** Han 字符占比达标且**假名（U+3040–U+30FF）占比低于一个小阈值**（日文会混用假名与汉字，故假名占比偏高即判为日文）。
-> 徽章用 `hasChinese`；仅有非中文本地化时，界面必须**如实**表述（例如「有本地化文档（非中文）」），不得显示"有中文说明"。
+> 界面上的徽章写的是「🈶 有中文说明」。若一个项目只有 `README.ja.md`（日文），却对中文新手宣称"有中文说明"，
+> 那就是一句**假话**，正是本项目反复修正的那类缺陷。因此检测必须同时产出两个布尔值：
+> - `hasChinese` —— **计分与徽章共用**（R143 起）：确实有中文。判定为 `README.zh-CN.md` / `README_CN.md` /
+>   `README.zh.md` / `docs/*.zh*` 之一存在，**或** Han 字符占比达标且**假名（U+3040–U+30FF）占比低于一个小阈值**
+>   （日文会混用假名与汉字，故假名占比偏高即判为日文）。
+> - `hasCjk` —— **只用于如实说明**（R143 起不参与计分）：CJK 占比达标，或存在任意本地化文件。
+> 徽章与计分都用 `hasChinese`；仅有非中文本地化时，界面必须**如实**表述（例如「有本地化文档（非中文）」），
+> 不得显示"有中文说明"，也不给这一项的分。
 
 ### 6.2 硬性门槛
 

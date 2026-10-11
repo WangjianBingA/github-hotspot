@@ -76,8 +76,12 @@ function boardSection(board) {
     if (Number.isFinite(repo.stars)) facts.push(`共 ${thousands(repo.stars)} 人收藏`);
     if (gained) facts.push(gained);
     if (typeof item.install?.kind === 'string') facts.push(installSummary(item));
-    if (item.chineseDoc === true) {
-      facts.push(item.hasChinese === true ? '有中文说明' : '有本地化文档（非中文）');
+    // R143 + R153：只有 `hasChinese`（真有中文）才算"有中文说明"；
+    // 有非中文本地化文件时如实说清楚；两样都没有就只说我们自己的查找动作（R71）。
+    if (item.hasChinese === true) {
+      facts.push('有中文说明');
+    } else if (Array.isArray(item.localizedFiles) && item.localizedFiles.length > 0) {
+      facts.push('有本地化文档（非中文）');
     } else {
       // R71：上游分不清"读过且只有英文"与"README 没拿到"，所以只能说我们自己的查找动作。
       facts.push('我们没有查到中文说明');

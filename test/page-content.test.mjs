@@ -274,7 +274,7 @@ test('真正渲染出来的文本不得出现字段名或英文行话', () => {
     confidence: 'estimated',
     velocitySource: 'events',
     grade: 'yellow',
-    chineseDoc: true,
+    hasChinese: true,
     hasChinese: true,
     localizedFiles: ['README.ja.md'],
     archived: true,
@@ -325,7 +325,7 @@ test('R144：后端产出的真形状能渲染出「有本地化文档（非中�
     [{ id: 'weekly', title: '本周飙升', items: [{
       rank: 1,
       repo: { ownerRepo: 'jp/japanese-only', name: 'japanese-only', description: '只有日文说明', language: 'Go', stars: 6800, forks: 420, license: 'Apache-2.0', pushedAt: '2026-10-09T12:00:00Z', archived: false, hasRelease90d: true },
-      runnability: { kind: 'npmBinWin', command: 'npx jp-tool', verified: true, difficulty: 'green', chineseDoc: false, hasChinese: false, localizedFiles: ['README.ja.md'], notes: [] },
+      runnability: { kind: 'npmBinWin', command: 'npx jp-tool', verified: true, difficulty: 'green', hasChinese: false, localizedFiles: ['README.ja.md'], notes: [] },
       velocity: { gained7d: 1400, gained3d: null, confidence: 'measured', source: 'history-json', level: 3 },
       score: { hot: 40, reputation: 20, runnable: 16, total: 76, parts: { installPath: 16, chinese: 0 } },
       grade: 'green',
@@ -351,7 +351,7 @@ test('R144：后端产出的真形状能渲染出「有本地化文档（非中�
     [{ id: 'weekly', title: '本周飙升', items: [{
       rank: 1,
       repo: { ownerRepo: 'cn/chinese-guide', name: 'chinese-guide', language: 'Python', stars: 4200, forks: 260, license: 'MIT', pushedAt: '2026-10-09T12:00:00Z', archived: false, hasRelease90d: true },
-      runnability: { kind: 'pypiCompatible', command: 'pip install chinese-guide', verified: true, difficulty: 'yellow', chineseDoc: true, hasChinese: true, localizedFiles: ['README.zh-CN.md'], notes: [] },
+      runnability: { kind: 'pypiCompatible', command: 'pip install chinese-guide', verified: true, difficulty: 'yellow', hasChinese: true, localizedFiles: ['README.zh-CN.md'], notes: [] },
       velocity: { gained7d: 2600, gained3d: null, confidence: 'measured', source: 'history-json', level: 3 },
       score: { hot: 40, reputation: 20, runnable: 21, total: 81, parts: { installPath: 14, chinese: 7 } },
       grade: 'yellow',
@@ -940,7 +940,7 @@ function installGuide(extra = {}) {
     evidence: 'repository',
     verified: true,
     requiresPython: null,
-    chineseDoc: false,
+    hasChinese: false,
     hasChinese: true,
     localizedFiles: [],
     notes: [],
@@ -1096,12 +1096,63 @@ test('置信度在抽屉里同样照实标注，没问到就不许写成一个 0
   assert.ok(!/1,?0?（实测）|（估算）/.test(unknown));
 });
 
-test('R64：非中文文档的条目在抽屉里也绝不显示「有中文说明」', () => {
-  const ja = item({ grade: 'yellow', hasChinese: false, localizedFiles: ['README.ja.md'], chineseDoc: true, install: installGuide({ hasChinese: false, chineseDoc: true, localizedFiles: ['README.ja.md'] }) });
+test('R64 + R153：只有日文文档的条目，抽屉里的徽章与中文说明都如实（R154 收窄用例名）', () => {
+  const ja = item({ grade: 'yellow', hasChinese: false, localizedFiles: ['README.ja.md'], install: installGuide({ hasChinese: false, localizedFiles: ['README.ja.md'] }) });
   const html = detailDrawer({ boardId: 'weekly', item: ja });
   assert.ok(!html.includes(CHINESE_BADGE), '没有中文就不许给中文徽章');
   assert.ok(html.includes(LOCALIZED_ONLY_BADGE), '有本地化文档就要如实说（非中文）');
   assert.ok(!visibleText(html).includes(CHINESE_BADGE));
+});
+
+// ---------- R155：install.notes 必须真的到用户眼前（R66 的"避免静默"） ----------
+
+test('R155：只有 Linux 版的工具落到 none 时，抽屉里真的出现那句原因', async () => {
+  // 复现评审指出的形态：`lookupNpm` 查到包、有 bin、但声明 os 不含 win32。
+  // 它落到 kind:'none'（不下发一条注定装不上的命令），于是：
+  //   · 门户 5（没有已核实的安装方式）把它挡在前两个榜外（只可能出现在经典榜），
+  //   · 用户能看到的说明只剩向导第 1 步那句"没有找到可以放心推荐的安装方式"，
+  //   · 而"它声明了不支持 Windows"**只写在 install.notes 里** —— R66 要求的那句"避免静默"没有兑现。
+  const { classifyRunnability } = await import('../src/enrich/runnability.mjs');
+  const runnability = classifyRunnability({
+    npm: { packageName: 'linux-tool', repoMatches: true, hasBin: true, osIncludesWin: false, evidence: 'repository' },
+  });
+  assert.equal(runnability.kind, 'none', '前提：这一条没有可操作的安装路径');
+  assert.ok(runnability.notes.some((n) => n.includes('不支持 Windows')), '前提：原因在这条 note 里');
+
+  const payload = buildDailyPayload(
+    [{ id: 'classic', title: '经典必玩', items: [{
+      rank: 1,
+      repo: { ownerRepo: 'linux/only', name: 'linux-only', description: '只有 Linux/macOS 版', language: 'Rust', stars: 12345, forks: 600, license: 'MIT', pushedAt: '2026-10-09T12:00:00Z', archived: false, hasRelease90d: true },
+      runnability,
+      velocity: { gained7d: 100, gained3d: null, confidence: 'measured', source: 'history-json', level: 3 },
+      score: { hot: 10, reputation: 15, runnable: 0, total: 25, parts: { installPath: 0, chinese: 0 } },
+      grade: 'red',
+      reasons: ['我们没有找到可以放心推荐给你的安装方式，可以打开项目主页自己看一眼'],
+    }] }],
+    '2026-10-10',
+    { generatedAt: '2026-10-10T00:00:00Z' },
+  );
+  const item = payload.boards[0].items[0];
+  assert.ok(Array.isArray(item.install.notes) && item.install.notes.length > 0, '前提：notes 随条目走到了界面这一层');
+
+  const html = detailDrawer({ boardId: 'classic', item });
+  assert.match(html, /不支持 Windows/, `抽屉里必须真的出现那句原因：${html.slice(0, 400)}`);
+  assert.match(html, /我们为什么不给你命令/, '这一节的标题要说清它在回答什么');
+  // 维护者向的那句（"我们没问到发布信息…网络或额度"）不该塞给新手。
+  assert.ok(!/网络或额度问题/.test(html), '维护者向的 note 不该出现在用户可见的抽屉里');
+});
+
+test('R155：没有 notes 时不出现这一节（反向对照）', () => {
+  const clean = item({ install: installGuide({ kind: 'releaseWindows', verified: true, downloadUrl: 'https://x/a.exe', notes: [] }) });
+  const html = detailDrawer({ boardId: 'weekly', item: clean });
+  assert.ok(!/data-section="why-notes"/.test(html), '没有 notes 时不该凭空长出一节');
+  assert.ok(!/我们为什么不给你命令/.test(html));
+  // 有 notes 但只给"可操作路径"的条目：标题不能说成"为什么不给你命令"（那时命令是给了的）。
+  const withNote = item({ install: installGuide({ kind: 'releaseWindows', verified: true, downloadUrl: 'https://x/a.exe', notes: ['这个包没有写它需要哪个版本的 Python；你的电脑上装的是哪个版本，网站看不到，装之前请自己确认一下。'] }) });
+  const html2 = detailDrawer({ boardId: 'weekly', item: withNote });
+  assert.match(html2, /data-section="why-notes"/, '有 note 就该出现这一节');
+  assert.match(html2, /你需要知道的事/, '已经给了命令时，标题要说"你需要知道的事"');
+  assert.ok(!/我们为什么不给你命令/.test(html2), '已经给了命令时，不许把标题写成"为什么不给你命令"');
 });
 
 test('抽屉不泄露内部字段名与取证英文值', () => {
@@ -1111,7 +1162,9 @@ test('抽屉不泄露内部字段名与取证英文值', () => {
     velocity: { gained7d: 900, gained3d: 120, confidence: 'estimated', source: 'events', level: 4 },
   });
   const html = detailDrawer({ boardId: 'weekly', item: nasty });
-  for (const leak of ['project_urls', 'ownerRepo', 'starsGained7d', 'velocitySource', 'chineseDoc', 'localizedFiles', 'npmBinWin', 'internal', 'install:']) {
+  // 内部字段名一个都不许出现在抽屉里。`chineseDoc` 是 R153 删掉的历史名，
+  // 留在这里是"防回归"（万一有人把它加回来又渲染出去）。
+  for (const leak of ['project_urls', 'ownerRepo', 'starsGained7d', 'velocitySource', 'hasChinese', 'chineseDoc', 'localizedFiles', 'npmBinWin', 'internal', 'install:']) {
     assert.ok(!html.includes(leak), `抽屉里泄露了内部取值：${leak}`);
   }
   assert.match(html, /这个包的官方页面里列着这个项目。/, '取证来源要给中文说法');

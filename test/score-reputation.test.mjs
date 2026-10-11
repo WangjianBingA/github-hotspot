@@ -66,7 +66,7 @@ test('超过 7 天没提交被门槛挡下', () => {
 test('scoreRepo 汇总三轴分数并透传 grade 与 confidence', () => {
   const s = scoreRepo({
     repo: base,
-    runnability: { kind:'releaseWindows', verified:true, chineseDoc:true },
+    runnability: { kind:'releaseWindows', verified:true, hasChinese:true },
     velocity: { gained7d: 3000, confidence: 'measured' },
     extra: { growing: true },
   }, new Date());
@@ -83,7 +83,7 @@ test('scoreRepo 汇总三轴分数并透传 grade 与 confidence', () => {
 test('scoreRepo 的 parts 同时带上口碑子项，total 等于三轴之和', () => {
   const s = scoreRepo({
     repo: base,
-    runnability: { kind:'npmBinWin', verified:true, chineseDoc:false },
+    runnability: { kind:'npmBinWin', verified:true, hasChinese:false },
     velocity: { gained7d: 0, confidence: 'estimated' },
     extra: { growing: null },
   }, new Date());

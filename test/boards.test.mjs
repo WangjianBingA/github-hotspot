@@ -118,15 +118,16 @@ test('每条结果都是完整的 RankedItem，并带中文上榜理由', () => 
     assert.deepEqual(
       Object.keys(x).sort(),
       // extra 于 Task 15 随 R41 加入：`extra.growing` 是"我们问没问到收藏在增长"的三态事实，
-      // 导出层要照实写进 JSON 给界面看，所以它必须跟着条目走出 buildBoard（其余 8 个字段保持原样）。
-      ['chineseDoc', 'extra', 'grade', 'rank', 'reasons', 'repo', 'runnability', 'score', 'velocity'],
+      // 导出层要照实写进 JSON 给界面看，所以它必须跟着条目走出 buildBoard。
+      // R153：`chineseDoc` 这个与 `hasChinese` 恒等的历史名已删除（同一事实只留一个名字）。
+      ['extra', 'grade', 'hasChinese', 'rank', 'reasons', 'repo', 'runnability', 'score', 'velocity'],
     );
     assert.ok(Array.isArray(x.reasons));
     assert.ok(x.reasons.every((r) => typeof r === 'string' && r.length > 0));
   }
   const top = w[0];
   assert.equal(top.repo.ownerRepo, 'gamma/pdfsmith');
-  assert.equal(top.chineseDoc, true);
+  assert.equal(top.hasChinese, true);
   assert.equal(top.grade, 'green');
   assert.ok(top.reasons.length >= 1);
   // 新手榜先按新手友好分排，满分 25 的候选有四个（同分时码点序最前的是 'Zed/x'，但它只有 21 分）。

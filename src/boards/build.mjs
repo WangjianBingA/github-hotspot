@@ -63,7 +63,11 @@ function toScored(candidate, now) {
     // R41：两个三态事实之一住在 extra 里（另一个住在 repo.hasRelease90d），必须跟着条目走到底。
     extra,
     grade: score.grade,
-    chineseDoc: runnability?.chineseDoc === true,
+    // R153：只保留 `hasChinese` 这一个名字（"真有中文文档"）。以前这里还有一个与之恒等的
+    // `chineseDoc`，两个名字指同一件事、却由不同消费者读（评分读 chineseDoc、文案与徽章读
+    // hasChinese）—— 那就是"同一事实两份真相源"，手写数据只要给一个不给另一个就能造出
+    // `{chineseDoc:true, hasChinese:false}` 这种自相矛盾的条目。历史名在 R153 删掉了。
+    hasChinese: runnability?.hasChinese === true,
     reasons: buildReasons({ score, repo, velocity, runnability }, now),
   };
 }
@@ -79,7 +83,7 @@ function toScored(candidate, now) {
  * @param {{ repo: object, runnability?: object, velocity?: object, extra?: object }[]} items 候选列表
  * @param {Date} [now] 显式传入"现在"，用于门槛的"近 7 天有提交"；默认 new Date()
  * @returns {{ rank: number, repo: object, runnability: object, velocity: object, extra: object,
- *   score: object, grade: string, chineseDoc: boolean, reasons: string[] }[]}
+ *   score: object, grade: string, hasChinese: boolean, reasons: string[] }[]}
  *   认不出的 boardId 返回空榜，不抛错（榜单清单以 config/boards.mjs 为准）。
  */
 export function buildBoard(boardId, items, now = new Date()) {

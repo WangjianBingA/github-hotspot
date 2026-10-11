@@ -94,15 +94,16 @@ export function scoreReputation(repo, extra = {}, now = new Date()) {
  * R143：中文那一项按 hasChinese（真有中文）算，**满给或 0**，不按比例；
  * 只有日文/韩文文档的项目拿不到这 7 分（它至多在界面上看到"有本地化文档（非中文）"）。
  * 名字沿用 v1 的 runnable，界面上叫"新手友好"，不要改名。
- * @param {{ kind?: string, chineseDoc?: boolean }} runnability kind 取自 RUNNABLE_POINTS 的键；
- *   chineseDoc 与 hasChinese 恒等（R143），就是"有中文文档"这一位
+ * R153：判据字段只有 `hasChinese` —— 历史名 `chineseDoc` 已删除（两个名字指同一件事，
+ * 却由评分与文案各自读一个，那就是"同一事实两份真相源"）。
+ * @param {{ kind?: string, hasChinese?: boolean }} runnability kind 取自 RUNNABLE_POINTS 的键
  * @returns {{ total: number, parts: { installPath: number, chinese: number } }}
  */
 export function scoreRunnable(runnability = {}) {
   const points = RUNNABLE_POINTS[runnability.kind];
   // 未知 kind（含原型链上的同名键）一律 0 分，绝不出 NaN。
   const installPath = Number.isFinite(points) ? points : 0;
-  const chinese = runnability.chineseDoc === true
+  const chinese = runnability.hasChinese === true
     ? CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile
     : 0;
   return { total: installPath + chinese, parts: { installPath, chinese } };

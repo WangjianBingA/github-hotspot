@@ -68,9 +68,9 @@ const npmEvidence = (npm) => (isNonEmpty(npm.evidence) ? npm.evidence.trim() : '
  *   chinese：detectChinese 的结果，用到 hasChinese（**计分与文案都认它**，R143）/
  *     hasCjk（更宽的"有本地化文档"信号，只用于 notes 里如实说明）/ localizedFiles
  * @returns {{ kind: string, command: string|null, downloadUrl: string|null, evidence: string|null,
- *   verified: boolean, difficulty: 'green'|'yellow'|'red', chineseDoc: boolean, hasChinese: boolean,
+ *   verified: boolean, difficulty: 'green'|'yellow'|'red', hasChinese: boolean,
  *   localizedFiles: string[], requiresPython: string|null, notes: string[] }}
- *   chineseDoc 与 hasChinese 恒等（R143）：前者是历史字段名，两者都表示"真有中文文档"。
+ *   只有一个中文结论字段：`hasChinese`（R153 删掉了与它恒等的历史名 `chineseDoc`）。
  */
 export function classifyRunnability(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
@@ -79,10 +79,10 @@ export function classifyRunnability(input = {}) {
   const pypi = source.pypi && typeof source.pypi === 'object' ? source.pypi : null;
   const chinese = source.chinese && typeof source.chinese === 'object' ? source.chinese : null;
 
-  // R143：计分口径从 hasCjk 改成 hasChinese。这条轴、口径页、README、手册都把它叫「中文说明」，
+  // R143 + R153：计分口径从 hasCjk 改成 hasChinese，并且**只保留 hasChinese 这一个名字**
+  // （历史名 chineseDoc 已删除）。这条轴、口径页、README、手册都把它叫「中文说明」，
   // 而 hasCjk 里含着假名与谚文——只有 README.ja.md 的项目会因此白拿 7 分（实测 sst/opencode 就是这种形状），
   // 同时卡片说"有中文说明"、抽屉 FAQ 说"没有找到中文说明"，同一条目自相矛盾。
-  // 现在：chineseDoc === hasChinese，字段名也就诚实了（chineseDoc 就是"有中文文档"）。
   // hasCjk 仍然保留，但只用于在 notes 里如实说明"有本地化文档，但不是中文"。
   const hasCjk = chinese?.hasCjk === true;
   const hasChinese = chinese?.hasChinese === true;
@@ -109,7 +109,8 @@ export function classifyRunnability(input = {}) {
     evidence: null,
     verified: true,
     difficulty: calculateGrade(RUNNABLE_POINTS[kind]),
-    chineseDoc: hasChinese,
+    // R153：只留 `hasChinese` 这一个名字 —— 计分、徽章、文案读的都是它。
+    // （历史名 `chineseDoc` 已删除：两个名字指同一件事、由不同消费者各读一个，就是两份真相源。）
     hasChinese,
     localizedFiles: [...localizedFiles],
     requiresPython: null,

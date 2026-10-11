@@ -41,10 +41,8 @@ function toItem(ranked) {
     // R48：这里只有**要求原文**，没有、也永远不会有"兼容性结论"——
     // 静态网站看不到访客电脑上装的是哪个版本，编一个 compatible: true 就是假话。
     requiresPython: runnability.requiresPython ?? null,
-    // R64 + R143：这两个字段现在恒等（都是"真有中文文档"），保留两个名字只是因为
-    // chineseDoc 是历史字段名、hasChinese 是界面用的名字。**计分与文案都认 hasChinese**，
-    // 日文/韩文文档不再算作中文（详见 enrich/runnability.mjs 的取值处）。
-    chineseDoc: runnability.chineseDoc === true,
+    // R143 + R153：中文只有**一个**结论字段 `hasChinese`（真有中文文档）。
+    // 计分、徽章、文案读的都是它；历史名 `chineseDoc` 已删除（同一事实两个名字 = 两份真相源）。
     hasChinese: runnability.hasChinese === true,
     notes: Array.isArray(runnability.notes) ? runnability.notes : [],
     steps: guide.steps,
@@ -74,7 +72,7 @@ function toItem(ranked) {
       ...Object.fromEntries(Object.entries(parts).map(([key, value]) => [key, round1(value)])),
     },
     grade: ranked.grade ?? null,
-    chineseDoc: runnability.chineseDoc === true,
+    // R153：顶层这一个是界面的契约字段（卡片徽章、筛选、日报都读它）。历史名 chineseDoc 已删除。
     hasChinese: runnability.hasChinese === true,
     // R144：本地化文件名清单**只在这一处（顶层）出现**，是它唯一的事实来源。
     // 以前它同时写在 install 里，而界面读的是顶层那一份 → 徽章「有本地化文档（非中文）」

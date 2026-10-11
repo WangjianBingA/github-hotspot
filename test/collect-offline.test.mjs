@@ -91,6 +91,26 @@ test('日报 Markdown 里估算值必须带"约"与"估算"', async () => {
   assert.match(r.markdown, /约|估算/);
 });
 
+// ---------- Task 19：离线采集写进真实数据目录时，那一天必须自己带着"这是样本"这一位 ----------
+
+test('R128：离线采集写进数据目录的每一天都带 demo 标记，清单也跟着标；真实采集不带', async () => {
+  // 手册里对 `npm run collect:offline` 的承诺正是这一条：产物写进你自己的数据目录（public/data），
+  // 而页面上照样会标注"这是演示数据"。这个标记**必须由采集时写进当天数据本身**才对得住那句话——
+  // 页面只读当天数据与清单，它不会（也不该）去猜这份数据是从哪来的。
+  const d = dir();
+  await runCollect({ dataDir: d, offline: true, now: NOW, sources: okSources });
+  assert.equal(readDaily(d, '2026-10-10').demo, true, '离线采集写下的当天数据必须自带 demo 位');
+  const index = JSON.parse(readFileSync(join(d, 'index.json'), 'utf8'));
+  assert.equal(index.demo, true, '清单里的 demo 位由当天数据派生，否则归档页标不出来');
+
+  // 反向对照：同一条流程、只把 offline 换成 false（仍然注入假 sources，绝不联网），这一位必须消失。
+  const d2 = dir();
+  await runCollect({ dataDir: d2, offline: false, now: NOW, sources: okSources });
+  assert.equal(readDaily(d2, '2026-10-10').demo, undefined, '真实采集不许被标成演示数据');
+  const index2 = JSON.parse(readFileSync(join(d2, 'index.json'), 'utf8'));
+  assert.equal(index2.demo, undefined, '真实数据的清单也不许带这一位');
+});
+
 // ---------- R26：经典榜必须吃自己的池子，不是周榜候选的投影 ----------
 
 test('R26 经典榜只排 discover 单独给出的经典池，不混入周榜候选', async () => {

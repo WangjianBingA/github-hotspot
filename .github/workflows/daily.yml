@@ -1,0 +1,80 @@
+# GitHub 好玩榜 —— 可选的每日采集（只在 GitHub 上生效）
+#
+# 这个文件是给"想把榜单放到网上、并且不想每天自己动手采一次"的人准备的。
+# 它**不会**在你自己电脑上生效：本地跑采集始终是你亲手敲 `npm run collect`。
+#
+# 使用前请知道三件事（README 与 docs/使用手册.md 里有更细的说明）：
+#   1. 它只对"放在 GitHub 上的这个仓库"生效；引用它的仓库必须先允许 Actions 运行。
+#   2. 提交回仓库靠 GITHUB_TOKEN。仓库默认给它的 contents 权限是**只读**，
+#      所以这里显式声明 permissions: contents: write（见下）；
+#      若仓库或组织的 "Workflow permissions" 被设成只读，这一步会被拒（报 Resource not accessible by integration），
+#      需要到 Settings → Actions → General → Workflow permissions 改成 "Read and write permissions"。
+#   3. 别人 fork 你的仓库之后，GitHub 会**默认禁用**这个定时任务（要先在 fork 里手动启用才会跑）；
+#      另外公开仓库连续 60 天没有任何活动时，GitHub 也会自动把它停掉。这两条都是 GitHub 的既定行为，
+#      不是这个文件能改的。
+#
+# 额度：这里用的是 GitHub 自动提供的 GITHUB_TOKEN（`secrets.GITHUB_TOKEN`）。
+#   · 它把 core 额度从"未登录的 60 次/小时"提到 **1000 次/小时/仓库**；
+#   · 而本项目一轮采集的预算是 **45 次请求**（src/cli.mjs 的 ROUND_BUDGET），
+#     所以登录之后额度非常宽裕，这一轮跑完不会撞上限。
+#   · 我们唯一的额度出口是 src/net/client.mjs：它接受 token 并写成 Authorization 头（CI 里就是靠
+#     env: GITHUB_TOKEN 传进去的），所以这里**不是**假装支持——真支持。
+#   · 就算不配 token 也跑得完：45 ≤ 60，只是余量小，遇上重试就容易半路收工。
+
+name: 每日采集
+
+on:
+  # 每天 UTC 23:00 跑一次。选这个点是因为本项目按 **UTC 整天**记账（"最近 7 天" = 已过完的 7 个 UTC 整日），
+  # 23:00 时这一天基本过完了，采到的当天快照更完整。
+  # GitHub 的定时任务在高峰期可能被推迟（官方文档明确写了这一点），所以实际执行时间会有偏差。
+  schedule:
+    - cron: '0 23 * * *'
+  # 手动兜底：Actions 页面上会出现 "Run workflow" 按钮，随时可以自己点一次。
+  workflow_dispatch: {}
+
+# 同一时刻只允许一轮在跑：两轮并发会争同一个 data/cache.json（本地缓存文件），
+# 而提交回仓库的又是同一批文件，串起来最省心。
+concurrency:
+  group: daily-collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 把采集产物提交回仓库需要它（只读时会被拒）
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 装 Node（本项目要求 22 以上）
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 先跑一遍离线采集当烟雾测试（不联网，几秒）
+        # 代码有语法错或装配错时，在这里就红掉，而不是等联网采集跑一半才发现。
+        # 它写的是临时目录，碰不到 public/data，所以不会污染真正要提交的数据。
+        run: npm run collect:offline
+
+      - name: 联网采集
+        env:
+          # 不给它的话也能跑（45 次预算 ≤ 未登录的 60 次/小时），但余量很小；
+          # 给了之后 core 额度是 1000 次/小时/仓库。这一行是 client.mjs 唯一读 token 的地方。
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run collect
+
+      - name: 提交采集产物
+        # public/data/ 与 data/ 在 .gitignore 里，所以**必须**用 git add -f；
+        # 不加 -f 的话这些文件会被静默忽略，推上去的还是一个没有任何数据的空站。
+        # data/cache.json 是本地缓存，故意不提交（它本来就被忽略）。
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f public/data daily
+          if git diff --cached --quiet; then
+            echo "这次采集没有产生任何变化，不提交。"
+            exit 0
+          fi
+          git commit -m "chore(data): 每日采集 $(date -u +%Y-%m-%d)"
+          git push

@@ -119,8 +119,38 @@ npm start
 - **不登录 GitHub 时有额度限制**：整轮采集自己设了 **45 次请求**的上限；其中搜索接口另外有更严的限制。
   额度用完时这一轮会**主动收工**并如实标注"这一期数据不完整"，而不是静默超支或者编数据。
   想跑得更宽裕，可以设环境变量 `GITHUB_TOKEN`（GitHub 的个人访问令牌）。
-- **它不会自己跑。** 仓库里**没有任何定时任务**（没有 `.github/` 工作流，也没有别的调度器）。
-  数据是**你敲命令那一刻**采的；想要经常有新数据，得你自己设一个计划任务，或者手动跑。
+- **它不会自己跑。** 数据是**你敲命令那一刻**采的。仓库里带了一个**可选的**每日定时任务
+  （`.github/workflows/daily.yml`），但它**只在 GitHub 上生效**，详情见下一节。
+
+## 想让它每天自己采一次？仓库自带一个可选的工作流
+
+`.github/workflows/daily.yml` 是一份现成的 GitHub Actions 工作流：每天 UTC 23:00 跑一次采集，
+把结果提交回仓库，于是线上站点就有了新数据。
+
+关于它，有五件事必须说清楚（前四件都是 GitHub 的既定行为，不是这个文件能改的）：
+
+1. **它只在 GitHub 上生效。** 它不会跑在你的电脑上——本地始终是你亲手敲 `npm run collect`。
+   不启用它的时候，榜单只在你手动采集之后才更新。
+2. **要在仓库设置里允许 Actions 写入。** 默认情况下 `GITHUB_TOKEN` 对仓库内容只有读权限，
+   而提交采集产物需要写权限。工作流里已经显式声明了 `permissions: contents: write`；
+   如果仓库或组织把 "Workflow permissions" 设成了只读，那一步会被拒
+   （报 `Resource not accessible by integration`），需要到
+   Settings → Actions → General → Workflow permissions 改成 "Read and write permissions"。
+3. **别人 fork 之后默认不会自动跑。** GitHub 为了防止无谓的运行，会**默认禁用** fork 里的定时任务，
+   必须在那个 fork 里手动启用才会跑。另外公开仓库连续 60 天没有任何活动时，GitHub 也会自动把它停掉。
+4. **它的额度够用**：这个工作流用的是 GitHub 自动提供的 `GITHUB_TOKEN`，把 core 额度从
+   "未登录的 60 次/小时"提到 **1000 次/小时/仓库**，而本项目一轮采集的预算是 **45 次请求**。
+   就算不配 token 也跑得完（45 ≤ 60），只是余量小、遇上重试容易半路收工。
+   GitHub 官方也说明：定时任务在高峰期可能被推迟，所以执行时间会有偏差。
+5. **随时可以手动跑一次**：工作流带了 `workflow_dispatch`，GitHub 的 Actions 页面里会有
+   一个「Run workflow」按钮。
+
+（上面第 2、3 条的原文出处是 GitHub 官方文档：
+[REST API 的额度](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)
+与 [schedule 事件](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)。）
+
+不想用它也完全可以删掉这个文件——删掉之后一切照旧，只是不再有人替你定时采。想在自己电脑上定时采，
+就用系统的计划任务（Windows 的"任务计划程序"、macOS/Linux 的 `cron`）自己排一条。
 
 ## 三个榜为什么空着 / 我该看什么
 
@@ -149,10 +179,13 @@ data/cache.json                    本地缓存，少问 GitHub 几遍
 因为 `index.html`、`app.js`、`style.css` 和 `data/` 都住在它下面。
 
 但有件事必须先想清楚：**`public/data/` 被 git 忽略了**，而静态托管是从你的 git 仓库构建的。
-所以光把代码推上去，线上站点打开只会显示"还没有任何榜单数据"。要让线上有内容，二选一：
+所以光把代码推上去，线上站点打开只会显示"还没有任何榜单数据"。要让线上有内容，三选一：
 
 - **让采集产物进仓库**：把 `/data/` 改成只忽略 `data/cache.json`，然后提交 `public/data/` 里的文件
   （这就是"公开可查的每日历史"的做法）；或者
+- **用仓库自带的每日工作流**：`.github/workflows/daily.yml` 会每天采一次并用 `git add -f` 把
+  `public/data/` 提交回仓库——线上站点第二天就有内容了。它需要你在仓库设置里允许 Actions 写入
+  （见上面那一节）；或者
 - **换个发布方式**：在托管平台上跑构建命令 `npm run collect`，让它在部署时现采一次
   （这需要平台能联网、并且要在环境变量里配 `GITHUB_TOKEN`，否则额度很紧）。
 
@@ -160,8 +193,7 @@ data/cache.json                    本地缓存，少问 GitHub 几遍
 
 - **GitHub Pages**：仓库 Settings → Pages → Source 选 "Deploy from a branch"。它只能选分支的
   根目录或 `/docs` 目录，而本项目要发的是 `public/`——所以最省事的做法是另建一个 `gh-pages` 分支，
-  把 `public/` 里的文件放到那个分支的根目录，然后发布它。（想全自动就得写 GitHub Actions 工作流，
-  这个仓库里没有带，需要你自己加。）
+  把 `public/` 里的文件放到那个分支的根目录，然后发布它。
 - **Cloudflare Pages**：新建项目 → 接上仓库 → Build command 留空（或填 `npm run collect`）→
   **Build output directory 填 `public`**。
 - **Vercel**：新建项目 → 接上仓库 → Framework Preset 选 "Other" → Build command 留空（或填
@@ -191,10 +223,13 @@ data/cache.json                    本地缓存，少问 GitHub 几遍
   它一概不知道，也不会去猜。要确认只能你自己敲 `node -v` 看一眼。
 - **月度归档文件现在是个空头支票**：`public/data/history/YYYY-MM.json` 每次采集都会写，
   但**目前没有任何代码读它**。它只是留着以后用的档案，不是一个功能。
-- **`npm test` 需要环境允许启动子进程**：它跑的是 Node 自带的测试运行器（`node --test`），
-  它会为每个测试文件起一个子进程。某些受限环境（沙箱、CI 策略）不允许这么做，这时 `npm test`
-  会报 `spawn EPERM`——**不是测试失败，是环境不允许**。那种环境下改用下面这条：它不派生子进程，
-  跑的是同一批用例（本项目开发时就是这么跑的）。
+- **那个每日工作流没有在真实仓库里跑过**：`.github/workflows/daily.yml` 的结构有测试盯着
+  （触发、权限、命令、`git add -f`、推送都要在），但本机没有 GitHub 仓库可挂，所以
+  "它在 Actions 里真的跑成了"这件事**没人验证过**。第一次启用后请到 Actions 页面看一眼那次运行。
+- **本开发环境的限制，不是项目的问题**：这个项目自己的测试在普通电脑上是正常通过的——
+  在项目目录里敲 `npm test` 就行。但本项目**开发时所处的受限环境**不允许 `node --test` 为每个测试文件
+  派生子进程，于是那里会报 `spawn EPERM`；那种环境下改用
+  `node --test --test-isolation=none test/*.test.mjs`（不派生子进程，同一批用例）。
 
 ## 许可证
 
@@ -208,7 +243,7 @@ MIT，见 [LICENSE](LICENSE)。你可以随便用、改、再发布，只要保�
 
 ```bash
 npm test                              # 跑全部测试（node:test，无第三方测试框架）
-node --test --test-isolation=none test/*.test.mjs   # 同上，但不派生子进程（沙箱里用这条）
+node --test --test-isolation=none test/*.test.mjs   # 不派生子进程（本项目开发环境里用这条）
 npm run collect:offline               # 不联网跑一遍完整采集流程
 node fixtures/demo/seed.mjs --write   # 重新生成仓库里自带的那份演示数据
 ```

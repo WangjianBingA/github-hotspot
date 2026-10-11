@@ -1239,8 +1239,6 @@ test('R117：正则判定必须排在"吃注释"之前（评审给的对抗性�
   assert.equal(stripComments('const t = `a ${b / 2} https://c`; // d'), 'const t = `a ${b / 2} https://c`; ');
 });
 
-
-
 test('R110：去注释助手不得把正则字面量当成注释（也不许颠倒引号配对）', () => {
   // ① 正则字符类里的两个斜杠：以前被当成行注释的开头，这一行剩下的代码全没了。
   const slashInClass = 'const re = /[//]/; const keep = 1; // tail';
@@ -1287,15 +1285,24 @@ test('R122：`of` 当值、`}` 之后是值（这两处以前会真的把代码�
   // ① `of` 曾经在"期待表达式的关键词"表里，于是 `of / 2` 被当成正则开头、后面整段代码被删。
   const ofCase = "const of = 4; const y = of / 2; const u = 'a///b'; const keep = 1;";
   assert.equal(stripComments(ofCase), ofCase);
-  // ② `}` 之后没被算成值，`{} / 2` 的除号同样被误判。
-  const braceCase = 'const o = {} / 2; const tail = 1;';
-  assert.equal(stripComments(braceCase), braceCase);
+
+  // ② `}` 之后没被算成值：`{ … } / 2` 的除号被误判成正则开头，于是一直读到**本行下一个 `/`**
+  //    （也就是行尾注释那个 `//`）才收尾 —— 结果是把行尾注释**留在了输出里**。
+  //    ★ 这条判据是**有鉴别力**的：在"`}` 不算值"的旧分类器下，输出会等于输入（注释没被删掉），
+  //      所以这一行断言在旧实现下必然变红。实测：`'const a = { k: 1 } / 2; // c'`
+  //      旧 → `'const a = { k: 1 } / 2; // c'`，新 → `'const a = { k: 1 } / 2; '`。
+  assert.equal(stripComments('const a = { k: 1 } / 2; // c'), 'const a = { k: 1 } / 2; ');
+  // 同一个 bug 的另一种最小形状（块里有内容 + 后面还有别的语句 + 行尾注释）。
+  assert.equal(stripComments('const m = { a: 1 } / 2; const sentinel = 9; // 尾注释'),
+    'const m = { a: 1 } / 2; const sentinel = 9; ');
+
   // ③ 正面对照：`for (const x of list)` 照旧（`of` 当值不影响它——后面跟的是标识符，不是斜杠）。
   const forOf = 'for (const x of list) { total += x; } // 注释';
   assert.equal(stripComments(forOf), 'for (const x of list) { total += x; } ');
   // ④ `return` / `case` 这些"期待表达式"的关键词仍在表里（它们后面的斜杠确实是正则）。
   assert.equal(stripComments('return /x/; // c'), 'return /x/; ');
-  assert.equal(stripComments('const a = { k: 1 } / 2; // c'), 'const a = { k: 1 } / 2; ');
+  // ⑤ 空块那条**没有鉴别力**（`{} / 2` 在旧分类器下也照过），所以只当正例留着，不当"抓 bug"的用例。
+  assert.equal(stripComments('const o = {} / 2; const tail = 1;'), 'const o = {} / 2; const tail = 1;');
 });
 
 test('R109：被扫描的源码里不许出现看不见的字符（零宽空格那类定时炸弹）', () => {

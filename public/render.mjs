@@ -546,20 +546,6 @@ export function itemCard({ boardId, item }) {
     + '</div>';
 }
 
-/**
- * 榜单列表上方那段说明（R102：文案选择属于显示决策，住在纯函数层）。
- *
- * R123：这句话**不按榜/按条目的内容变**——它不枚举任何具体小节，所以不存在"替某一条打包票"的问题。
- * 参数保留是为了不动调用方（也方便将来真有需要时再分口径）。
- * @param {{ boardId?: string, hasGuide?: boolean, hasFacts?: boolean }} [input]
- * @returns {string} HTML 片段（纯文本 + 一个链接）
- */
-export function cardDetailHint(input = {}) {
-  const source = input && typeof input === 'object' ? input : {};
-  void source;
-  return cardDetailHintText();
-}
-
 // ---------- 详情抽屉（Task 17；R25 / R64 / R78 / 置信度 / 转义都在这里定） ----------
 
 /**

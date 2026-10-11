@@ -86,9 +86,10 @@ const mapItem = (raw) => {
     stars: Number.isFinite(raw.stargazers_count) ? raw.stargazers_count : 0,
     forks: Number.isFinite(raw.forks_count) ? raw.forks_count : 0,
     openIssues: Number.isFinite(raw.open_issues_count) ? raw.open_issues_count : 0,
-    // GitHub 的 search 结果里根本没有"已关闭 issue 数"这个字段，一律 0 表示“不知道”。
-    // 口碑评分已不使用该字段（spec §6.1 移除了 issue 处理率），保留只是为了 RepoRef 形状稳定。
-    closedIssues: 0,
+    // R150/M3：这里**不再伪造** closedIssues: 0。GitHub 的 search 结果里根本没有"已关闭 issue 数"
+    // 这个字段，而口碑评分也从不用它（spec §6.1 移除了 issue 处理率）——一个恒为 0 的字段
+    // 除了在下游被当成"这个项目一个 issue 都没关过"之外没有任何用处。
+    // 与 Task 4B 拆掉的那批同形缺陷一样：没有消费者的字段就不该存在。
     createdAt: typeof raw.created_at === 'string' ? raw.created_at : null,
     pushedAt: typeof raw.pushed_at === 'string' ? raw.pushed_at : null,
     license,

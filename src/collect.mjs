@@ -570,7 +570,17 @@ export async function runCollect({ dataDir, client, sources, now = new Date(), o
   // 两者不可能不一致（同一个对象，又是在同一处序列化）。
   const markdown = renderDailyMarkdown(payload, { degraded: ctx.degraded, notes: ctx.warnings });
   const json = `${JSON.stringify(payload, null, 2)}\n`;
-  if (typeof dailyDir === 'string' && dailyDir !== '') writeDailyFiles(dailyDir, ctx.date, markdown, json);
+  // R148：日报与 `public/data` 那份**同受 `wroteDaily` 约束**。以前这里只看 dailyDir，
+  // 于是"今天已经有榜单文件、这一轮什么内容都没拿到"的那种运行会：
+  //   · public/data/<今天>.json 被**故意跳过覆盖**（保留旧的好数据，见 ⑥ 的注释），
+  //   · 却把 daily/<今天>.{md,json} 写成空榜 —— 同一次运行的两个产物互相矛盾，
+  // 而且 daily/ 不在 .gitignore 里，那份空日报会被提交、被转发出去。
+  // 现在两者要么一起更新，要么一起不动，并在 warnings 里说清为什么没写（不静默）。
+  if (wroteDaily && typeof dailyDir === 'string' && dailyDir !== '') {
+    writeDailyFiles(dailyDir, ctx.date, markdown, json);
+  } else if (!wroteDaily && typeof dailyDir === 'string' && dailyDir !== '') {
+    note(ctx, `这一轮没有新内容，daily/ 里的日报也没有重写（否则会写成一份空榜，与保留着的 ${ctx.date} 榜单文件对不上）`);
+  }
 
   const apiCalls = ctx.client.stats();
   logger?.log?.(`本轮用了 ${apiCalls.coreCalls} 次 core 请求、${apiCalls.searchCalls} 次 search 请求，降级：${ctx.degraded}`);
@@ -602,6 +612,10 @@ function snapshotMapOf(boards) {
  * @param {string} date UTC 日期（YYYY-MM-DD）
  * @param {string} md Markdown 文本
  * @param {string} json JSON 文本
+ *
+ * R148：这个函数只负责"把给定文本写下去"，**它自己不管 `wroteDaily`** ——
+ * 该不该写由调用方（runCollect 的 ⑦ 那一段）决定，因为只有那里知道"今天已经有文件、而这一轮没拿到内容"。
+ * 直接调它的地方（测试、脚本）要自己保证传进来的是一份真的完整的榜单。
  */
 export function writeDailyFiles(dir, date, md, json) {
   mkdirSync(dir, { recursive: true });

@@ -131,6 +131,12 @@ export function readSnapshotStars(dataDir, date) {
  * 语义与 writeDaily 不同，勿改成整日覆盖：当日榜单文件是"当天最终榜单快照"，重跑整份替换；
  * 历史档案是护城河数据，按 [日期][ownerRepo] 二级键合并——同一天的同一仓库以本轮为准，
  * 本轮没写到的仓库保留原值，避免降级重跑（候选池变小）静默抹掉已记录的历史。
+ *
+ * **写出前把两级键都排序**（R145 附带修掉的一个真问题）：对象键的顺序就是插入顺序，
+ * 而合并语义让插入顺序取决于"这个仓库第一次出现在哪一轮"。于是同一份候选、同一段代码，
+ * 只要候选池的顺序变了（例如往夹具里加一条），写出来的 JSON 键序就会变 —— 内容一字不差、字节不同。
+ * 演示数据那条"逐字节一致"的测试因此会红，而且**每次重跑都可能不一样**：那不是有人在手改数据，
+ * 而是这里本来就不确定。排过序之后，"内容相同 ⇒ 文件相同"这条性质成立。
  * @param {string} dataDir 数据目录
  * @param {string} date UTC 日期（YYYY-MM-DD）
  * @param {Map<string, {stars: number, forks: number}>} snapshotMap 该天的仓库快照
@@ -142,8 +148,18 @@ export function appendHistory(dataDir, date, snapshotMap) {
   // 档案必须始终是"对象"形态，否则用空对象重新开始。
   const history = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
   const day = history[date] && typeof history[date] === 'object' ? history[date] : {};
-  history[date] = { ...day, ...Object.fromEntries(snapshotMap) };
-  writeJsonAtomic(filePath, history);
+
+  const mergedDay = { ...day };
+  for (const [ownerRepo, snapshot] of snapshotMap) {
+    if (typeof ownerRepo !== 'string' || ownerRepo === '') continue;
+    mergedDay[ownerRepo] = snapshot;
+  }
+
+  const next = {};
+  for (const pastDate of Object.keys(history).sort()) next[pastDate] = history[pastDate];
+  next[date] = Object.fromEntries(Object.keys(mergedDay).sort().map((key) => [key, mergedDay[key]]));
+
+  writeJsonAtomic(filePath, next);
 }
 
 /**

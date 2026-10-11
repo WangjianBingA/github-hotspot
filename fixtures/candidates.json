@@ -7,15 +7,24 @@
       "stars": 5000,
       "forks": 300,
       "openIssues": 20,
-      "closedIssues": 80,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 1600, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1600,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -25,15 +34,24 @@
       "stars": 5000,
       "forks": 300,
       "openIssues": 20,
-      "closedIssues": 80,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 1600, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1600,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -43,15 +61,24 @@
       "stars": 5000,
       "forks": 300,
       "openIssues": 20,
-      "closedIssues": 80,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 1500, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1500,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -61,15 +88,24 @@
       "stars": 1500,
       "forks": 120,
       "openIssues": 12,
-      "closedIssues": 88,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "releaseWindows", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 1400, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "releaseWindows",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1400,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -79,15 +115,24 @@
       "stars": 5000,
       "forks": 300,
       "openIssues": 20,
-      "closedIssues": 80,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 1500, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1500,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -97,15 +142,24 @@
       "stars": 20000,
       "forks": 1200,
       "openIssues": 10,
-      "closedIssues": 90,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "releaseWindows", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 2500, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "releaseWindows",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 2500,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -115,15 +169,24 @@
       "stars": 18000,
       "forks": 900,
       "openIssues": 30,
-      "closedIssues": 70,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "releaseWindows", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 2200, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "releaseWindows",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 2200,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -133,15 +196,24 @@
       "stars": 15000,
       "forks": 800,
       "openIssues": 40,
-      "closedIssues": 60,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "Apache-2.0",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "npmBinWin", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 1800, "confidence": "estimated" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "npmBinWin",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1800,
+      "confidence": "estimated"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -151,15 +223,24 @@
       "stars": 12000,
       "forks": 600,
       "openIssues": 25,
-      "closedIssues": 75,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 1500, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1500,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -169,15 +250,24 @@
       "stars": 11000,
       "forks": 500,
       "openIssues": 15,
-      "closedIssues": 85,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 1300, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1300,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -187,15 +277,24 @@
       "stars": 10000,
       "forks": 400,
       "openIssues": 50,
-      "closedIssues": 50,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "GPL-3.0",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "releaseWindows", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 1200, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "releaseWindows",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1200,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -205,15 +304,24 @@
       "stars": 9000,
       "forks": 380,
       "openIssues": 22,
-      "closedIssues": 78,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "buildFromSource", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 1100, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "buildFromSource",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1100,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -223,15 +331,24 @@
       "stars": 8000,
       "forks": 360,
       "openIssues": 28,
-      "closedIssues": 72,
       "pushedAt": "2026-10-08T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "npmNoBin", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 1000, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "npmNoBin",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1000,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -241,15 +358,24 @@
       "stars": 7000,
       "forks": 340,
       "openIssues": 12,
-      "closedIssues": 88,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 900, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 900,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -259,15 +385,24 @@
       "stars": 20000,
       "forks": 1500,
       "openIssues": 60,
-      "closedIssues": 40,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "Apache-2.0",
       "archived": false,
       "hasRelease90d": false
     },
-    "runnability": { "kind": "npmNoBin", "verified": true, "chineseDoc": false },
-    "velocity": { "gained7d": 700, "confidence": "measured" },
-    "extra": { "growing": false }
+    "runnability": {
+      "kind": "npmNoBin",
+      "verified": true,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 700,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": false
+    }
   },
   {
     "repo": {
@@ -277,15 +412,24 @@
       "stars": 6000,
       "forks": 260,
       "openIssues": 18,
-      "closedIssues": 82,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "npmNoBin", "verified": true, "chineseDoc": false },
-    "velocity": { "gained7d": 600, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "npmNoBin",
+      "verified": true,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 600,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -295,15 +439,24 @@
       "stars": 5000,
       "forks": 220,
       "openIssues": 20,
-      "closedIssues": 80,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "npmNoBin", "verified": true, "chineseDoc": false },
-    "velocity": { "gained7d": 500, "confidence": "reported" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "npmNoBin",
+      "verified": true,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 500,
+      "confidence": "reported"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -313,15 +466,24 @@
       "stars": 4000,
       "forks": 180,
       "openIssues": 16,
-      "closedIssues": 84,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "npmNoBin", "verified": true, "chineseDoc": false },
-    "velocity": { "gained7d": 400, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "npmNoBin",
+      "verified": true,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 400,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -331,15 +493,24 @@
       "stars": 3000,
       "forks": 150,
       "openIssues": 14,
-      "closedIssues": 86,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": false
     },
-    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": false },
-    "velocity": { "gained7d": 300, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 300,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -349,15 +520,24 @@
       "stars": 2000,
       "forks": 120,
       "openIssues": 10,
-      "closedIssues": 90,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": false },
-    "velocity": { "gained7d": 200, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 200,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -367,15 +547,24 @@
       "stars": 1000,
       "forks": 90,
       "openIssues": 8,
-      "closedIssues": 92,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "buildFromSource", "verified": true, "chineseDoc": false },
-    "velocity": { "gained7d": 120, "confidence": "estimated" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "buildFromSource",
+      "verified": true,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 120,
+      "confidence": "estimated"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -385,15 +574,24 @@
       "stars": 900,
       "forks": 80,
       "openIssues": 9,
-      "closedIssues": 91,
       "pushedAt": "2026-10-07T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "dockerOnly", "verified": true, "chineseDoc": false },
-    "velocity": { "gained7d": 100, "confidence": "estimated" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "dockerOnly",
+      "verified": true,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 100,
+      "confidence": "estimated"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -403,15 +601,24 @@
       "stars": 800,
       "forks": 70,
       "openIssues": 7,
-      "closedIssues": 93,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "dockerOnly", "verified": true, "chineseDoc": false },
-    "velocity": { "gained7d": 90, "confidence": "estimated" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "dockerOnly",
+      "verified": true,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 90,
+      "confidence": "estimated"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -421,14 +628,21 @@
       "stars": 60000,
       "forks": 4000,
       "openIssues": 5,
-      "closedIssues": 95,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": true,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "releaseWindows", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 0, "confidence": "measured" },
+    "runnability": {
+      "kind": "releaseWindows",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 0,
+      "confidence": "measured"
+    },
     "extra": {}
   },
   {
@@ -439,15 +653,24 @@
       "stars": 50000,
       "forks": 3000,
       "openIssues": 5,
-      "closedIssues": 95,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": null,
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "npmBinWin", "verified": true, "chineseDoc": false },
-    "velocity": { "gained7d": 1500, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "npmBinWin",
+      "verified": true,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 1500,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -457,15 +680,24 @@
       "stars": 40000,
       "forks": 2500,
       "openIssues": 5,
-      "closedIssues": 95,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "npmBinWin", "verified": false, "chineseDoc": false },
-    "velocity": { "gained7d": 1800, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "npmBinWin",
+      "verified": false,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 1800,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -475,15 +707,24 @@
       "stars": 30000,
       "forks": 2000,
       "openIssues": 5,
-      "closedIssues": 95,
       "pushedAt": "2026-09-01T00:00:00Z",
       "license": "MIT",
       "archived": false,
       "hasRelease90d": true
     },
-    "runnability": { "kind": "pypiCompatible", "verified": true, "chineseDoc": true },
-    "velocity": { "gained7d": 900, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 900,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   },
   {
     "repo": {
@@ -493,14 +734,83 @@
       "stars": 25000,
       "forks": 1800,
       "openIssues": 5,
-      "closedIssues": 95,
       "pushedAt": "2026-10-09T12:00:00Z",
       "license": "CC0-1.0",
       "archived": false,
       "hasRelease90d": false
     },
-    "runnability": { "kind": "none", "verified": false, "chineseDoc": false },
-    "velocity": { "gained7d": 0, "confidence": "measured" },
-    "extra": { "growing": true }
+    "runnability": {
+      "kind": "none",
+      "verified": false,
+      "chineseDoc": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 0,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "cn/chinese-guide",
+      "description": "带完整中文说明的小工具，用来演示「🈶 有中文说明」这个徽章",
+      "language": "Python",
+      "stars": 4200,
+      "forks": 260,
+      "openIssues": 12,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "chineseDoc": true,
+      "hasChinese": true,
+      "localizedFiles": [
+        "README.zh-CN.md"
+      ]
+    },
+    "velocity": {
+      "gained7d": 2600,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "jp/japanese-only",
+      "description": "只有日文说明的项目，用来演示「有本地化文档（非中文）」这个徽章",
+      "language": "Go",
+      "stars": 6800,
+      "forks": 420,
+      "openIssues": 18,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "Apache-2.0",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "npmBinWin",
+      "verified": true,
+      "chineseDoc": false,
+      "hasChinese": false,
+      "localizedFiles": [
+        "README.ja.md"
+      ]
+    },
+    "velocity": {
+      "gained7d": 1400,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
   }
 ]

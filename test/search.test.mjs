@@ -137,7 +137,10 @@ test('缺失字段时给出安全默认值，不抛错', async () => {
   assert.equal(mapped.stars, 0);
   assert.equal(mapped.forks, 0);
   assert.equal(mapped.openIssues, 0);
-  assert.equal(mapped.closedIssues, 0);
+  // R150/M3：`closedIssues` 这个字段已经删掉（search 结果里本来就没有它，
+  // 以前那个恒为 0 的值只是在下游被当成"一个 issue 都没关过"）。这里改成断言它不存在，
+  // 免得以后有人"顺手补回一个默认值"——那正是 Task 4B 拆掉过的同形缺陷。
+  assert.ok(!('closedIssues' in mapped), 'search 的映射结果里不该再有 closedIssues');
   assert.equal(mapped.createdAt, null);
   assert.equal(mapped.pushedAt, null);
   assert.equal(mapped.archived, false);

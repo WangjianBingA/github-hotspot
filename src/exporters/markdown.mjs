@@ -121,8 +121,9 @@ function installSummary(item) {
  * RankedItem。这样日报与网站读的是同一份数据，"装法/下载链接""总分条"这些只有在 payload 里
  * 才存在的字段才真的可用——旧实现把 RankedItem 传进来，那几个分支永远执行不到，
  * 于是日报里从来没有出现过安装方式（也没有总分）。
- * @param {{ date: string, degraded: boolean, notes: string[], boards: object[] }} payload 日报对象
- * @param {{ degraded?: boolean, notes?: string[] }} [options] 缺省时用 payload 自带的 degraded/notes
+ * @param {{ date: string, degraded: boolean, notes: string[], boards: object[], demo?: boolean }} payload 日报对象
+ *   demo（R146）：payload 自己声明"这是内置样本"时，日报顶部要标注、文末也不许声称数据来自 GitHub；
+ * @param {{ degraded?: boolean, notes?: string[], demo?: boolean }} [options] 缺省时用 payload 自带的 degraded/notes/demo
  * @returns {string} 以换行结尾的 Markdown 文本
  */
 export function renderDailyMarkdown(payload, options = {}) {
@@ -130,7 +131,19 @@ export function renderDailyMarkdown(payload, options = {}) {
   const date = typeof source.date === 'string' ? source.date : '';
   const list = Array.isArray(source.boards) ? source.boards : [];
   const degraded = options.degraded ?? source.degraded === true;
+  // R146：演示标注必须与 JSON 同源（同一个 payload 的这一位），不能只在网页上标。
+  // 日报是会被提交进仓库、被转发给别人看的文件（daily/ 不在 .gitignore 里），
+  // 不标就等于把内置样本当成"今天的热门项目"发出去。
+  const demo = options.demo ?? source.demo === true;
   const lines = [`# GitHub 好玩榜 · ${date}`, ''];
+
+  if (demo === true) {
+    lines.push(
+      `> ⚠️ **这是演示数据（内置样本），不是从网上采集来的真实数据。** 它代表 ${date || '某一天'} 这一天的榜单，`
+      + '内容来自项目自带的样本，只用来展示这份日报长什么样；**它不代表最近真的在流行什么**。',
+      '',
+    );
+  }
 
   if (degraded === true) {
     lines.push('> ⚠️ **本期数据不完整**：这一轮有东西没拿到（网络、额度或改版），下面标出的项目可能少了若干条信息。', '');
@@ -159,8 +172,17 @@ export function renderDailyMarkdown(payload, options = {}) {
   lines.push(
     '---',
     '',
-    '数据来源：GitHub 公开 API 与 github.com/trending 页面。涨星速度按五级降级阶梯取，',
-    '标着"（估算）"的数字是外推得到的，不是实测值；看不出来源时我们会说"没查到"，不会编一个数。',
+    // R146：数据来源那一句必须与"这份数据是从哪来的"一致。演示数据时**绝不能说**
+    // "来自 GitHub 公开 API"——那是日报最容易撒的一个谎（文件会被提交、会被转发）。
+    ...(demo === true
+      ? [
+        '数据来源：**项目自带的演示样本**（用内置候选跑出来的），不是从 GitHub 采集的真实数据。',
+        '涨星速度、榜单排序、安装向导都由正式代码算出，但输入是样本，所以数字没有现实意义。',
+      ]
+      : [
+        '数据来源：GitHub 公开 API 与 github.com/trending 页面。涨星速度按五级降级阶梯取，',
+        '标着"（估算）"的数字是外推得到的，不是实测值；看不出来源时我们会说"没查到"，不会编一个数。',
+      ]),
     '',
   );
   return lines.join('\n');

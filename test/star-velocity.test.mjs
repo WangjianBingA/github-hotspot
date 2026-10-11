@@ -246,6 +246,22 @@ test('级别 1 的边界：正好 7 天算新建，超过 7 天不算', async ()
   assert.equal(over.source, 'none');
 });
 
+test('R150/M6：createdAt 落在未来时级别 1 不可用（坏数据不许变出一个"实测值"）', async () => {
+  const ctx = { client:{}, dataDir:null, trendingByRepo:new Map(), now: NOW };
+  // NOW 是 2026-10-10；这里给一个 2026-12-01 的 createdAt（时钟偏差或数据损坏）。
+  // 失败开放的写法会让"现在 - createdAt"变成负数，于是必然 ≤ 7 天 → 把**总收藏数**当成
+  // "这一周涨的"，并标成 measured。同文件对级别 0 是关闭的（ageDays < 0 直接返回 null），
+  // 这里现在也一致了。
+  const future = await resolveVelocity({ ownerRepo:'a/b', createdAt:'2026-12-01T00:00:00Z', stars: 42 }, ctx);
+  assert.notEqual(future.level, 1, `未来的 createdAt 不该走级别 1，实际 ${JSON.stringify(future)}`);
+  assert.equal(future.source, 'none');
+  assert.equal(future.gained7d, 0);
+  // 反向对照：同样是 42 颗星、但创建时间在 7 天以内（没过期的那一侧），级别 1 必须成立。
+  const recent = await resolveVelocity({ ownerRepo:'a/b', createdAt:'2026-10-05T00:00:00Z', stars: 42 }, ctx);
+  assert.equal(recent.level, 1);
+  assert.equal(recent.confidence, 'measured');
+});
+
 test('trending 的 starsThisWeek 为 0 时不当作 reported（页面没说 ≠ 涨了 0）', async () => {
   const t = new Map([['a/b', { starsThisWeek: 0, starsToday: 0 }]]);
   const v = await resolveVelocity(oldRepo, { client:{}, dataDir:null, trendingByRepo:t, now: NOW });

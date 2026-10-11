@@ -6,6 +6,7 @@
 //   级别 0  stargazers/history —— 周桶里有逐日增量，能同时给出精确的 7 日与 3 日增量。
 //                               confidence:'measured'，源码 source:'stargazers-history'
 //   级别 1  仓库建于 7 天内 —— 它的总收藏数**就是** 7 日增量（没有更早的历史可言）。
+//                               createdAt 落在未来（坏数据）时**该级不可用**，往下走（R150/M6）。
 //                               confidence:'measured'，source:'new-repo'
 //   级别 2  trending 页面自己写的 starsThisWeek —— 官方口径的转述。
 //                               confidence:'reported'，source:'trending'
@@ -188,13 +189,20 @@ async function levelFromHistory(client, ownerRepo, now, createdAtMs) {
 
 /**
  * 级别 1：仓库建于 7 天内 → 它的总收藏数就是 7 日增量（0 次请求，且是真测量）。
- * createdAt 落在未来（时钟偏差 / 数据损坏）时也算"新建"：它确实不可能有 7 天以上的历史。
- * 但 gained3d 仍是 null —— 总星数只说得出"全部"，说不出"最近 3 天"。
+ * gained3d 仍是 null —— 总星数只说得出"全部"，说不出"最近 3 天"。
+ *
+ * R150/M6：`createdAt` 落在**未来**（时钟偏差 / 数据损坏）时这一级**不可用**，与级别 0 的处理一致
+ * （级别 0 的 `ageDays < 0` 同样直接返回 null）。以前这里是失败开放的：未来的时间戳让
+ * `now - createdAt` 变成负数、必然 ≤ 7 天，于是"这个仓库建于未来"会被读成"它是新建的"，
+ * 把整个总收藏数当成"这一周涨的"——那是拿坏数据编出来的一个实测值。
+ * 降到下一级（trending 转述 / 历史差值 / 事件外推 / 不知道）都比编一个数字诚实。
  * @returns {object|null}
  */
 function levelFromNewRepo(repo, now, createdAtMs) {
   if (createdAtMs === null) return null;
-  if ((now.getTime() - createdAtMs) / DAY_MS > WEEK_DAYS) return null;
+  const ageDays = (now.getTime() - createdAtMs) / DAY_MS;
+  if (ageDays < 0) return null;                                 // 未来时间戳：不猜，往下走
+  if (ageDays > WEEK_DAYS) return null;
   if (!isCount(repo?.stars)) return null;
   return { gained7d: repo.stars, gained3d: null, level: 1, confidence: 'measured', source: 'new-repo' };
 }

@@ -828,10 +828,64 @@ test('日报同时给出 Markdown 与 JSON 字符串，且都写进 daily/ 目�
   assert.match(readFileSync(join(out, '2026-10-10.md'), 'utf8'), /2026-10-10/);
 });
 
+// ---------- R146：日报必须与 JSON 同源标注"这是演示数据" ----------
+
+test('R146：离线采集的日报要标注"这是演示数据"，且不许声称数据来自 GitHub', async () => {
+  const d = dir();
+  const out = dir();
+  const r = await runCollect({ dataDir: d, offline: true, now: NOW, sources: okSources, dailyDir: out });
+  const md = readFileSync(join(out, '2026-10-10.md'), 'utf8');
+
+  // ① 同一个 payload 上的那一位：JSON 有 demo:true，日报的字符串与落盘文件都必须标注。
+  assert.equal(JSON.parse(r.json).demo, true, '前提：离线采集的 payload 带 demo 位');
+  for (const [label, text] of [['返回值里的 markdown', r.markdown], ['落盘的 .md', md]]) {
+    assert.match(text, /演示数据|内置样本/, `${label} 必须标注这是演示数据`);
+  }
+  // ② **绝不许**声称数据来自 GitHub —— 那是日报里最容易撒的谎（文件会被提交、被转发）。
+  assert.ok(!/数据来源：GitHub 公开 API/.test(md), '演示数据的日报不许声称来自 GitHub API');
+  assert.ok(!/github\.com\/trending/.test(md), '演示数据的日报不许声称来自 trending 页面');
+  // ③ 落盘的 .json 与返回值是同一份（含 demo 位）。
+  assert.deepEqual(JSON.parse(readFileSync(join(out, '2026-10-10.json'), 'utf8')), JSON.parse(r.json));
+});
+
+test('R146：真实采集的日报不许出现任何"演示数据"字样（反向对照）', async () => {
+  const d = dir();
+  const out = dir();
+  // offline: false、但仍然注入假 sources —— 一个网络请求都不发，只是把"这一轮是真实采集"这一位传进去。
+  const r = await runCollect({ dataDir: d, offline: false, now: NOW, sources: okSources, dailyDir: out });
+  assert.equal(JSON.parse(r.json).demo, undefined, '前提：真实采集不写 demo 位');
+  const md = readFileSync(join(out, '2026-10-10.md'), 'utf8');
+  assert.ok(!/演示数据|内置样本/.test(md), '真实数据的日报不该出现演示字样');
+  assert.match(md, /数据来源：GitHub 公开 API/, '真实数据的日报照旧写明来源');
+});
+
 test('落盘的 JSON 与返回值里的 JSON 是同一份（网站读到什么，测试就断言什么）', async () => {
   const d = dir();
   const r = await runCollect({ dataDir: d, offline: true, now: NOW, sources: okSources });
   assert.deepEqual(readDaily(d, '2026-10-10'), JSON.parse(r.json));
+});
+
+// ---------- R148：日报与 public/data 必须同受 wroteDaily 约束 ----------
+
+test('R148：这一轮没拿到内容时，日报也不重写（否则会写成一份空榜，与保留着的榜单文件对不上）', async () => {
+  const d = dir();
+  const out = dir();
+  // 第一轮：正常跑，写出一份完整数据与一份日报。
+  await runCollect({ dataDir: d, offline: true, now: NOW, sources: okSources, dailyDir: out });
+  const dailyBefore = readFileSync(join(out, '2026-10-10.md'), 'utf8');
+  const listBefore = readFileSync(join(d, '2026-10-10.json'), 'utf8');
+
+  // 第二轮：同一份 sources 却"一条都发现不了" —— 这正是 collect.mjs ⑥ 那段要防的形态
+  // （hasContent === false 且今天已有文件 ⇒ 故意跳过覆盖，免得把已有数据擦成空榜）。
+  const empty = { discover: async () => ({ candidates: [], classic: async () => [] }), enrich: async (c) => c };
+  const r = await runCollect({ dataDir: d, offline: true, now: NOW, sources: empty, dailyDir: out });
+
+  assert.equal(r.wroteDaily, false, '前提：这一轮没有内容、也没有覆盖当天文件');
+  assert.equal(readFileSync(join(d, '2026-10-10.json'), 'utf8'), listBefore, 'public/data 里的旧数据必须原样保留');
+  assert.equal(readFileSync(join(out, '2026-10-10.md'), 'utf8'), dailyBefore,
+    'daily/ 里的日报也不许被重写成空榜 —— 两个产物要么一起更新、要么一起不动');
+  // 而且要说清为什么没写（不静默）。
+  assert.ok(r.warnings.some((w) => w.includes('没有新内容')), `要在 warnings 里说明：${JSON.stringify(r.warnings)}`);
 });
 
 // ---------- 假 client / 候选构造（只在需要"真实 sources"的用例里用） ----------

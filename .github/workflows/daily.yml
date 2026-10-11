@@ -53,9 +53,33 @@ jobs:
           node-version: '22'
 
       - name: 先跑一遍离线采集当烟雾测试（不联网，几秒）
-        # 代码有语法错或装配错时，在这里就红掉，而不是等联网采集跑一半才发现。
-        # 它写的是临时目录，碰不到 public/data，所以不会污染真正要提交的数据。
-        run: npm run collect:offline
+        # 代码有语法错或装配错时，在这里就红掉，而不是等联网采集跑了一半才发现。
+        # ⚠️ 它**不是**无副作用的：`collect --offline` 与联网采集写的是同一批路径
+        # （src/cli.mjs 的 DEFAULT_DATA_DIR / DEFAULT_DAILY_DIR → public/data/ 与 daily/），
+        # 写下的每一天都带 `demo: true`。所以紧接着的下一步**必须**把它们清空，
+        # 否则样本数据会被最后那步的 `git add -f` 提交上去、变成一个把样本当真实数据的线上站点。
+        run: |
+          if npm run collect:offline; then
+            echo "烟雾测试通过。"
+          else
+            echo "烟雾测试失败——下一步照样会清掉它写下的样本数据。"
+            exit 1
+          fi
+
+      - name: 清掉烟雾测试写下的样本数据（保留已经提交过的数据）
+        # 这一步之前，public/data/ 与 daily/ 里混着两样东西：
+        #   ① 烟雾测试刚写下的**样本**（每一天都带 `demo: true`）——必须清掉；
+        #   ② 仓库里**已经提交过**的真实数据（如果你照着 README 把采集产物放进仓库了）——绝不能删！
+        #      删了它们，这一次提交就会把历史数据整批从仓库里抹掉。
+        # 所以这里用 `git clean -Xfd` 而不是 `rm -rf public/data daily`：
+        #   -X 只删「被 .gitignore 忽略的」文件——样本数据正是这一类（public/data 与 data/ 都被忽略），
+        #   而已经提交过的文件是**被跟踪**的，`git clean` 永远不会碰它们。
+        # 为什么非清不可：如果联网采集这一步一条内容都没拿到，src/collect.mjs 会**故意跳过覆盖**当天文件
+        # （宁可留着旧数据也不擦成空榜），于是被提交上去的就是烟雾测试留下的样本数据。
+        if: always()
+        run: |
+          git clean -Xfd
+          echo "已清掉被忽略的样本数据（提交过的数据文件原样保留），接下来由联网采集重新写。"
 
       - name: 联网采集
         env:

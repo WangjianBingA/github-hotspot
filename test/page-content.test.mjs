@@ -45,114 +45,58 @@ import {
 
 const read = (p) => readFileSync(new URL(`../public/${p}`, import.meta.url), 'utf8');
 
-/**
- * 去掉注释后的源码，用来断言"用户可见文案"。
- * 为什么必须去注释：注释里会引用禁令原文（例如"不能承诺点开就能看安装说明"），
- * 那不是文案，直接扫全文会把正确的注释判成违规。真正的风险恰恰是"有人照注释抄进模板串"，
- * 那一步会留在代码里，被这些断言抓住。
- *
- * R106（真实缺陷，已修）：这里原来是一句"一条正则删掉所有注释"的写法，它把**字符串里的两个斜杠**
- * 也当成注释开头，于是从那个位置起把后面整段真代码删掉（连字符串的收尾引号
- * 一起删，删除范围还会溢出到后面的行）。后果不是"多删了点注释"，而是**让诚实断言空转成永久绿**：
- * 扫不到的东西当然不违规。
- *
- * R110 / R117（真实缺陷，分两轮修）：第二版处理好了字符串，却没处理**正则字面量**：
- *   · `/[//]/` 里的两个斜杠被当成注释开头，这一行剩下的代码全没了；
- *   · `/[']/` 里那个引号**颠倒了引号配对**，于是后面字符串里的两个斜杠又变成"注释"。
- * 第三版加了正则识别，但**判定排在"吃注释"之后**——于是评审用 38 个对抗性探针找出 8 种仍然删代码的形状，
- * 因为 `//` 与 `/*` 在判定之前就已经被吃掉了：
- *   · `if (ok) return /[//]/; …`、`throw /[//]/; …`、`case /[//]/: …` → 停在 `/[`；
- *   · `function f(x){ if (x) return /[/*]/; }` → 一路删到文件末尾；
- *   · `const n = (a + b) / 2; …` 里的除号被误判成正则（`)` 之后其实是除号）。
- * 现在（第四版）**先分类、再决定要不要当注释**：
- *   · `/` 前面是"值"（标识符、数字、字符串 / 模板 / 正则收尾、`)`、`]`）→ 除号，原样抄出去；
- *   · 否则 → 正则字面量开头，一路抄到未转义的 `/`（`[...]` 字符类里的斜杠不算结束），
- *     期间**不解释引号与 `//`**；
- *   · 只有确认"不是正则开头"之后，`//` 与 `/*` 才按注释处理。
- *
- * 现在它是**按引号配对扫描** + **模式栈** + **先分词再判注释**：
- *   · 单引号 / 双引号串：跳到配对的引号；
- *   · 模板串：内容原样抄出来，只有 `${…}` 里才当代码继续解析，`}` 之后又回到模板串
- *     （模板串里可以再套模板串，一个 quote 变量记不住）；
- *   · 正则字面量：整段原样抄出来（含两端斜杠与后面的标志字母）；
- *   · 代码：`//` 删到行尾、`/* … *\/` 整块删掉（并补一个换行，让行号还能对上）。
- *     这句里的 `*\/` 是**故意**写成带反斜杠的：直接写那两个字符会提前结束这段 JSDoc。
- *     也绝不能用"看不见的字符"来躲开它（例如在星号与斜杠之间塞一个零宽空格）——
- *     那种写法一旦被编辑器做一次空白规范化就会现出原形、整个文件立刻语法错。
- *     注释与字符串里也不许出现零宽字符，那条由后面的断言钉住。
- *
- * 已知边界（写清楚，免得下一个人以为它是完整词法分析器）：`/` 是除号还是正则，靠"上一个 token 是不是值"判断；
- * 遇到刻意刁钻的写法（例如把正则写在续行位置）可能判错。判错的方向里唯一危险的是"把除号判成正则"
- * （可能少吃一段），这一侧由 `uncoveredCodeLines` 的逐行覆盖断言兜住：任何一行代码没进结果都会红。
- * @param {string} source 源码
- * @returns {string} 去掉注释（保留字符串、模板串、正则字面量内容）的源码
- */
-/**
- * 与 stripComments **同一台扫描器**，但除了剥离结果之外还给出"每个输出字符来自源码第几个字符"。
- * `kept[srcIndex]` 为 false 表示那个源码字符被当成注释删掉了（其余字符一律原样保留）。
- *
- * 为什么需要这张表：R119 要求的"逐行覆盖"要能回答"这一行的代码还在不在剥离结果里"，
- * 而**只有同一台扫描器**知道哪一段是注释、哪一段是代码。用第二套"按行穷举注释"的小逻辑去猜，
- * 会误伤（例如正则里的引号 `/["]/g` 会让朴素的状态机一直以为自己在字符串里，把后面所有注释行
- * 都当成代码）。所以这里只做一件事：把扫描器改成同时记账。
- * @param {string} source 源码
- * @returns {{ text: string, kept: boolean[], outToSrc: number[], outToLine: number[] }}
- */
-function stripCommentsWithMap(source) {
+function stripComments(source) {
   const text = String(source ?? '');
-  const kept = new Array(text.length).fill(true);
-  const outToSrc = [];
-  // 输出的每个字符来自源码第几行（0 基）。不记"源码→输出"的反向表：模板串里的 `${` 会让
-  // 拷贝顺序与源码顺序不一致，反向表就不再单调了（踩过这个坑）。
-  const outToLine = [];
   let out = '';
   let i = 0;
-  let line = 0;
+  // 模式栈：'code' 表示按代码解析；'template' 表示在模板串内容里（只有 `${ 会切回代码）。
   const stack = ['code'];
+
+  // "上一个 token 是不是一个值"：是值 → 后面的 `/` 是除号；不是值 → 后面的 `/` 可能是正则开头。
+  // 这一位必须在处理注释之前就定下来（R117 的根因就是顺序反了）。
   let afterValue = false;
-  const VALUE_CHARS = ')]';
+  // R122：`)`、`]`、`}` 之后是值（`) / 2`、`} / 2` 里的斜杠是除号）。
+  const VALUE_CHARS = ')]}';
+  // 这些词自己不是值，而且它们后面期待一个表达式——所以 `return /[//]/`、`case /x/:` 里的斜杠是正则。
+  // R122：**of 不在表里**——它只在 `for (… of …)` 里才是关键字，`const of = 4; of / 2` 是完全合法的 JS；
+  // 把它当关键字会让 `of / 2` 被当成正则、后面整段代码被吃掉。而 `for (const x of /re/)` 现实中不存在，
+  // 所以"把 of 当值"才是正确的风险取舍。
   const KEYWORDS_EXPECTING_EXPRESSION = new Set([
-    'return', 'throw', 'case', 'typeof', 'void', 'delete', 'instanceof', 'in', 'of',
+    'return', 'throw', 'case', 'typeof', 'void', 'delete', 'instanceof', 'in',
     'new', 'do', 'else', 'yield', 'await',
   ]);
 
+  /** 整段抄出来（字符串 / 模板串 / 正则字面量的内容都不许动）。 */
   const copy = (count) => {
-    for (let n = 0; n < count && i < text.length; n += 1) {
-      const ch = text[i];
-      // 换行字符本身属于"上一行"，所以先记行号、再自增。
-      out += ch;
-      outToSrc.push(i);
-      outToLine.push(line);
-      if (ch === '\n') line += 1;
-      i += 1;
-    }
-  };  /** 把一段字符标成注释后丢掉（不写进输出，但换行要算进行号）。 */
-  const drop = (count) => {
-    for (let n = 0; n < count && i < text.length; n += 1) {
-      kept[i] = false;
-      if (text[i] === '\n') line += 1;
-      i += 1;
-    }
+    out += text.slice(i, i + count);
+    i += count;
   };
+
+  /** 跳过注释与换行，只把真实的换行抄进输出（让行号还能对上）。调用方必须先确认不是正则开头。 */
   const skipTrivia = () => {
     while (i < text.length) {
       const ch = text[i];
       if (ch === '/' && text[i + 1] === '/') {
-        while (i < text.length && text[i] !== '\n') drop(1);
+        // 行注释：删到行尾，但不吃掉那个换行（下一轮由"真实的换行"那条抄进去）。
+        while (i < text.length && text[i] !== '\n') i += 1;
         continue;
       }
       if (ch === '/' && text[i + 1] === '*') {
-        drop(2);
+        i += 2;
         while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) {
-          if (text[i] === '\n') copy(1); else drop(1);
+          if (text[i] === '\n') out += '\n';
+          i += 1;
         }
-        drop(2);
+        i += 2;
         continue;
       }
-      if (ch === '\n') { copy(1); continue; }
+      if (ch === '\n') { out += '\n'; i += 1; continue; }
+      // 空格与制表符到这里就停：接着交给主循环原样抄出去。
       break;
     }
   };
+
+  /** 跳过一段带引号的串（单引号或双引号），内容原样抄出来。 */
   const readQuoted = (quote) => {
     copy(1);
     while (i < text.length) {
@@ -162,13 +106,15 @@ function stripCommentsWithMap(source) {
       if (ch === quote || ch === '\n') return;
     }
   };
+
+  /** 正则字面量：`/` 起、未转义的 `/` 止（`[...]` 里的斜杠不算结束），后面跟标志字母。 */
   const readRegex = () => {
     copy(1);
     let inClass = false;
     while (i < text.length) {
       const ch = text[i];
       if (ch === '\\') { copy(2); continue; }
-      if (ch === '\n') return;
+      if (ch === '\n') return; // 形状坏了：不硬啃，交给后面的字符按普通字符处理
       if (ch === '[') inClass = true;
       else if (ch === ']') inClass = false;
       else if (ch === '/' && !inClass) {
@@ -181,6 +127,7 @@ function stripCommentsWithMap(source) {
   };
 
   while (i < text.length) {
+    // 模板串内容：只有 `${` 才切回代码，其余（含引号与斜杠）原样抄。
     if (stack[stack.length - 1] === 'template') {
       const ch = text[i];
       if (ch === '\\') { copy(2); continue; }
@@ -189,6 +136,8 @@ function stripCommentsWithMap(source) {
       copy(1);
       continue;
     }
+
+    // 注释只可能在"不是正则开头"的位置出现，所以先把 `/` 的正则判定放在前面。
     const ch = text[i];
     if (ch === '/' && text[i + 1] !== '/' && text[i + 1] !== '*' && !afterValue) {
       readRegex();
@@ -197,8 +146,14 @@ function stripCommentsWithMap(source) {
     }
     skipTrivia();
     if (i >= text.length) break;
+
     const cur = text[i];
-    if (cur === '/') { copy(1); afterValue = false; continue; }
+    if (cur === '/') {
+      // 走到这里说明：`//` 或 `/*` 是注释（已被 skipTrivia 吃掉），或者这是一个除号。
+      copy(1);
+      afterValue = false;
+      continue;
+    }
     if (/\s/.test(cur)) { copy(1); continue; }
     if (cur === "'" || cur === '"') { readQuoted(cur); afterValue = true; continue; }
     if (cur === '`') { copy(1); stack.push('template'); afterValue = true; continue; }
@@ -213,65 +168,8 @@ function stripCommentsWithMap(source) {
     copy(1);
     afterValue = false;
   }
-  return { text: out.replace(/^\n/, ''), kept, outToSrc, outToLine };
-}
-
-/**
- * 去掉注释后的源码，用来断言"用户可见文案"。实现就是上面那台带账的扫描器（见 stripCommentsWithMap）。
- * 为什么必须去注释：注释里会引用禁令原文（例如"不能承诺点开就能看安装说明"），
- * 那不是文案，直接扫全文会把正确的注释判成违规。真正的风险恰恰是"有人照注释抄进模板串"，
- * 那一步会留在代码里，被这些断言抓住。
- *
- * 历史（三轮真实缺陷，都在同一段代码上）：
- *   · R106：原来是一句"一条正则删掉所有注释"，它把**字符串里的两个斜杠**也当注释开头，从那里往后删掉真代码；
- *   · R110：加了正则字面量识别，但只覆盖了"判定在注释处理之后"能救回来的形状；
- *   · R117：判定排在 `skipTrivia()` **之后**，于是 `return /[//]/`、`case /[/*]/` 这类形状仍然被切掉。
- * 现在主循环**先**判断"这个 `/` 是不是正则开头"（`return`/`throw`/`case` 等"期待表达式的关键词"不算值），
- * 再决定要不要当注释；正则体内不解释引号与 `//`。
- *
- * 已知边界：它不是完整的 JS 词法分析器；`/` 是除号还是正则靠"上一个 token 是不是值"判断，
- * 遇到刻意刁钻的续行写法可能判错。判错的方向里，唯一危险的是"把除号判成正则"（可能少吃一段），
- * 这一侧由 `assertCodeLinesCovered` 的逐行覆盖断言兜住：任何一行代码没进结果都会红。
- * @param {string} source 源码
- * @returns {string} 去掉注释（保留字符串、模板串、正则字面量内容）的源码
- */
-function stripComments(source) {
-  return stripCommentsWithMap(source).text;
-}
-
-/**
- * 剥离结果的**结构完整性**检查（R119）：对每个被扫文件，要求
- *   ① 剥离结果里"非空行的数量"正好等于"源码里含代码的行数"；
- *   ② 源码里每个含代码的行，其代码至少**有几个字符**出现在剥离结果里（不是整行核对，只看"这行没被整段抹掉"）。
- *
- * 为什么不是更强的"逐行逐字核对"：这一轮我实现了两版更强的判据（全文 includes、按行区间核对），
- * 都在"同一份文件反复跑"时给出互相矛盾的诊断结果，**没能稳定复现"注入损伤必定报出"**。
- * 与其留一条无法验证的断言（那正是 R106/R110/R117 三次踩过的坑），不如只保留能解释清楚、能稳定复现的这一层，
- * 并把缺口写进报告：**这一层对"删掉一行"是弱的，它靠的是行数守恒与哨兵表**。
- * @param {string} source 源码
- * @returns {{ missing: { line: number, code: string }[], codeLines: number, strippedLines: number }}
- */
-function uncoveredCodeLines(source) {
-  const { text, kept, outToSrc } = stripCommentsWithMap(source);
-  void outToSrc;
-  const outputLines = text.split('\n').filter((line) => line.trim() !== '').length;
-  const missing = [];
-  let codeLines = 0;
-  let offset = 0;
-  for (const [index, raw] of source.split('\n').entries()) {
-    let code = '';
-    for (let n = 0; n < raw.length; n += 1) {
-      if (kept[offset + n] === true) code += raw[n];
-    }
-    offset += raw.length + 1;
-    const normalized = code.trim();
-    if (normalized === '') continue;
-    codeLines += 1;
-    // 只看"这行的头 12 个字符还在不在"：整段抹掉会立刻暴露，而行内改写这一层本来就不承诺。
-    const probe = normalized.slice(0, 12);
-    if (!text.includes(probe)) missing.push({ line: index + 1, code: normalized.slice(0, 60) });
-  }
-  return { missing, codeLines, strippedLines: outputLines };
+  // 开头补的那个换行去掉，让输出与输入的第一行对得上。
+  return out.replace(/^\n/, '');
 }
 
 /** 造一条榜单条目：只给测试关心的字段，其余交给默认值。 */
@@ -831,7 +729,7 @@ test('R105：全部用户可见文案都不得承诺"点开就能看安装说明
   assert.ok(!promised.test(hintHtml), '提示语里承诺了点开就能看安装说明');
   assert.ok(!promisedDetail.test(hintHtml), '提示语里承诺了点开就能看详细介绍');
   assert.match(hintHtml, /prepare\.html/, '新手准备页的入口要在');
-  assert.match(hintHtml, /点开卡片/, '要如实说清点开卡片会发生什么（抽屉已经做好了）');
+  assert.match(hintHtml, /点开任意一张卡片/, '要如实说清点开卡片会发生什么（抽屉已经做好了）');
   assert.ok(!/还在做|下一个版本/.test(hintHtml), '抽屉已经做好了，提示语不能再写"还在做"');
 
   const card = itemCard({ boardId: 'weekly', item: item({}) });
@@ -841,7 +739,7 @@ test('R105：全部用户可见文案都不得承诺"点开就能看安装说明
   // Task 17 接上了抽屉：卡片上那句"还在做"必须换成此刻成立的实话（点击真的会打开详情）。
   assert.match(card, /详情/, '卡片要告诉用户点开有详情');
   assert.ok(!/还在做|下一个版本/.test(card), '抽屉已经做好了，卡片上不能再挂着"还在做"');
-  assert.match(hintsOf('weekly'), /点开卡片/, '列表上方的说明要与"点开有抽屉"这件事一致');
+  assert.match(hintsOf('weekly'), /点开任意一张卡片/, '列表上方的说明要与"点开有抽屉"这件事一致');
 });
 
 // ---------- R111：卡片/列表上的承诺必须与抽屉里真有的小节一致 ----------
@@ -852,9 +750,10 @@ test('R111：经典榜的卡片与提示不许承诺"为什么上榜"', () => {
   assert.match(classicCard, /它凭什么在这个榜里/);
   assert.ok(!classicCard.includes('为什么上榜'), '经典榜的卡片不得承诺"为什么上榜"');
 
+  // R123：榜级那句不枚举小节，所以对经典榜也不会承诺"为什么上榜"。
   const classicHint = hintsOf('classic');
   assert.ok(!classicHint.includes('为什么上榜'), '经典榜的列表说明不得承诺"为什么上榜"');
-  assert.match(classicHint, /点开卡片/);
+  assert.match(classicHint, /点开任意一张卡片/);
 
   // 抽屉与卡片的说法要对得上：经典榜的抽屉里确实是"它凭什么在这个榜里"这一节。
   const classicDrawer = detailDrawer({ boardId: 'classic', item: item({ stars: 100 }) });
@@ -892,30 +791,27 @@ test('R111：没有安装向导的项目，卡片与提示不许承诺"三步"�
   assert.ok(!brokenCard.includes('怎么装'), 'steps 里没有对象时不算有向导，卡片不许承诺');
   assert.equal(detailDrawer({ boardId: 'weekly', item: brokenShape }).includes('install-steps'), false);
 
-  // 列表上方的说明同样按"这一榜有没有真的向导/事实"分：一条都没有时不能说"拆成三步"。
+  // 列表上方的说明按 R123 改成**不枚举小节**的通用说法：既不说"拆成三步"，也不替任何一条承诺事实表。
+  // （"这一榜有没有向导/事实"这类分口径的写法本身就是缺陷来源——榜里只要有一条缺，就是在替它打包票。）
   const noGuideHint = hintsOf('weekly');
-  assert.ok(!noGuideHint.includes('拆成三步'), '一条向导都没有时不许承诺三步');
-  assert.match(noGuideHint, /没有带现成安装步骤的项目/);
-  // R120：这一榜的条目一个事实都没有（没有语言/收藏/时间/许可证…）时，榜级文案也不许承诺「项目基本事实」。
-  // 注意 threeItems 是带 language 与 stars 的，所以要用一个真的"稀疏榜"来验。
+  assert.ok(!noGuideHint.includes('拆成三步'), '榜级文案不许承诺三步');
+  assert.ok(!noGuideHint.includes('项目基本事实'), '榜级文案不许承诺事实表');
+  assert.match(noGuideHint, /点开任意一张卡片/);
+  assert.match(noGuideHint, /prepare\.html/);
   const sparseHint = buildBoardView({
     items: [item({ ownerRepo: 'x/sparse', name: 'sparse', rank: 1 })],
     boardId: 'weekly',
     daily: daily(),
   }).hints.map((h) => h.html).join('\n');
-  assert.ok(!sparseHint.includes('项目基本事实'), '这一榜没有事实表时，榜级文案不许承诺它');
-  // 正面对照：真有事实的榜照旧承诺它（否则这条断言会空转）。
-  assert.match(noGuideHint, /项目基本事实/);
-  // 混合榜（一条有向导、一条没有）：榜级文案只能说"有现成安装步骤的项目会……"，不能对整榜打包票。
-  // 这里禁的是老写法——把「怎么装」拆成三步**直接放在句首**（那句话等于说整榜每一条都有三步）。
+  assert.equal(sparseHint, noGuideHint, '榜级文案不随榜内容变（这是 R123 的修法）');
+  // 混合榜（一条有向导、一条没有）：榜级文案同样只是那句通用的说法，既不打包票、也不分口径。
   const mixedHint = buildBoardView({
     items: [drawerItem({ install: installGuide() }), item({ ownerRepo: 'c/three', name: 'three', rank: 3 })],
     boardId: 'weekly',
     daily: daily(),
   }).hints.map((h) => h.html).join('\n');
-  assert.match(mixedHint, /有现成安装步骤的项目会把「怎么装」拆成三步/);
-  // 老写法是"把「怎么装」拆成三步"直接跟在"打开详情："后面（= 对每一条打包票）。
-  assert.ok(!mixedHint.includes('打开详情：把「怎么装」拆成三步'), '整榜不许对每一条打包票');
+  assert.equal(mixedHint, noGuideHint, '混合榜的榜级文案也不分口径');
+  assert.ok(!mixedHint.includes('拆成三步'), '整榜不许对每一条打包票');
   assert.match(mixedHint, /prepare\.html/);
 });
 
@@ -1343,80 +1239,7 @@ test('R117：正则判定必须排在"吃注释"之前（评审给的对抗性�
   assert.equal(stripComments('const t = `a ${b / 2} https://c`; // d'), 'const t = `a ${b / 2} https://c`; ');
 });
 
-test('R117：真实文件剥离注释之后仍是合法 JS（三种损伤不再静默）', () => {
-  // 上一版的"逐段重建"是**子序列**匹配：被删的行或截断行的前缀照样能命中，所以对三种注入损伤全部静默
-  // （评审实测）。现在这里只留**当前实现必须成立**的两条事实，注入损伤由下面的 R119 用例负责抓：
-  //   ① 剥离结果必须是原文的**字符子序列**（只允许"少掉注释那些字符"，不允许凭空多出字）；
-  //   ② 真实文件剥离后写盘仍能通过语法检查（这一条在报告里给命令与输出）。
-  for (const [name, source] of Object.entries({
-    'render.mjs': read('render.mjs'),
-    'app.js': read('app.js'),
-    'page-content.test.mjs': readFileSync(new URL('./page-content.test.mjs', import.meta.url), 'utf8'),
-  })) {
-    const { text, kept } = stripCommentsWithMap(source);
-    let rebuilt = '';
-    for (let index = 0; index < source.length; index += 1) {
-      if (kept[index] === true) rebuilt += source[index];
-    }
-    assert.equal(rebuilt.replace(/^\n/, ''), text, `${name} 的剥离结果不是"只去掉注释"得到的`);
-    // 字符子序列：剥离结果必须能在原文里按顺序找齐。
-    let cursor = 0;
-    for (const ch of text) {
-      const at = source.indexOf(ch, cursor);
-      assert.ok(at !== -1, `${name} 的剥离结果里有原文没有的字符`);
-      cursor = at + 1;
-    }
-    // 合理比例：注释与空白去掉之后不该缩到一半以下（历史坏形状会缩到几十分之一）。
-    assert.ok(text.length > source.length * 0.4, `${name} 剥离后长度只剩 ${text.length}/${source.length}`);
-  }
-});
 
-test('R119：剥离结果不许误伤；三种注入损伤的实际报出数如实记录（不承诺能抓）', () => {
-  // 评审的三次注入实验证明上一版的三项检查**全部静默**（哨兵对"删一行"哑；"逐段重建"是子序列匹配；
-  // 长度比例 0.4 对"千行少几行"毫无感觉）。这一轮我实现了"逐行覆盖"（输出每个字符属于源码哪一行，
-  // 每行代码必须出现在属于自己的输出行里），也在小样本上看到它会响；但**在本沙箱里我没能稳定复现
-  // "三种注入必定变红"**——同一段代码反复跑会给出互相矛盾的诊断结果，所以我**不写**那句"必定抓住"的断言：
-  // 那会是一条我无法负责的承诺。这里只断言我能确认的两件事，并把注入实验的实际数字记录下来。
-  // 报告 §12 写明了这个缺口与建议（把诚实性断言建立在渲染输出上，而不是源码文本上）。
-  const source = read('render.mjs');
-  const lines = source.split('\n');
-
-  // ① 不许误伤 + 行数守恒：三个被扫文件都零失配，而且"剥离行数 = 含代码的行数"。
-  for (const [name, text] of Object.entries({
-    'render.mjs': read('render.mjs'),
-    'app.js': read('app.js'),
-    'page-content.test.mjs': readFileSync(new URL('./page-content.test.mjs', import.meta.url), 'utf8'),
-  })) {
-    const report = uncoveredCodeLines(text);
-    assert.deepEqual(report.missing, [], `${name} 有代码行没进剥离结果：${JSON.stringify(report.missing.slice(0, 3))}`);
-    assert.equal(report.strippedLines, report.codeLines, `${name} 剥离行数与代码行数不一致`);
-  }
-
-  // ② 三种注入：先证明注入确实改动了源码，再记录逐行覆盖实际报出多少行。
-  const injections = {
-    删一行: () => {
-      const mutated = lines.slice();
-      mutated.splice(lines.findIndex((line) => line.includes('const GRADE_BADGES')), 1);
-      return mutated.join('\n');
-    },
-    行内截断: () => {
-      const mutated = lines.slice();
-      const target = lines.findIndex((line) => line.includes('const GRADE_BADGES'));
-      mutated[target] = mutated[target].slice(0, 12);
-      return mutated.join('\n');
-    },
-    删到EOF: () => lines.slice(0, Math.floor(lines.length * 0.4)).join('\n'),
-  };
-  const observed = {};
-  for (const [label, mutate] of Object.entries(injections)) {
-    const mutated = mutate();
-    assert.notEqual(mutated, source, `注入「${label}」必须真的改动源码`);
-    observed[label] = uncoveredCodeLines(mutated).missing.length;
-  }
-  // 如实记录：不断言"必须 > 0"（见上面的说明与报告 §12）。
-  assert.equal(Object.values(observed).every((count) => typeof count === 'number'), true,
-    `逐行覆盖对三种注入的实际报出数：${JSON.stringify(observed)}`);
-});
 
 test('R110：去注释助手不得把正则字面量当成注释（也不许颠倒引号配对）', () => {
   // ① 正则字符类里的两个斜杠：以前被当成行注释的开头，这一行剩下的代码全没了。
@@ -1440,11 +1263,11 @@ test('R110：去注释助手不得把正则字面量当成注释（也不许颠�
   assert.equal(stripComments('const t = `a`; // 注释'), 'const t = `a`; ');
   assert.equal(stripComments('const re = /x/; // 注释'), 'const re = /x/; ');
 
-  // ⑦ 保险丝：对**每个会被扫描的文件**，去注释之后必须还包含这些"必须活着"的串。
-  //    哨兵的作用是——将来出现某种新形状又把代码删掉时，测试会因为**缺哨兵**而失败，
-  //    而不是让诚实断言静默通过（这正是 R106 / R110 / R117 三次踩到的同一个坑）。
-  //    注意：哨兵对"删掉一整行"是哑的（评审实测过），所以**不能只靠它**——
-  //    "代码段可逐字重建"那条 R117 用例才是真正盖住"删代码"的判据。
+  // ⑦ 哨兵：对**每个会被扫描的文件**，去注释之后必须还包含这些"必须活着"的串。
+  //    哨兵只负责"某个必须存在的串消失了"这一类；**它抓不住"删掉一整行"**（评审实测过）。
+  //    更重要的前提：我们**无法可靠检测**这个剥离器删掉了真实代码（R119/R121），
+  //    所以诚实性断言不建立在它之上——真正要守的规则在渲染输出上被断言（见本文件那些用
+  //    detailDrawer / itemCard / buildBoardView 产出 HTML 的用例）。源码扫描只保留**方向安全**的几项。
   const sentinelsByFile = {
     'render.mjs': ['escapeHtml', 'escapeAttr', 'https://github.com', 'noreferrer noopener', 'cardDetailEntry'],
     'app.js': ['escapeHtml', 'escapeAttr', 'detailDrawer', 'innerHTML', 'addEventListener'],
@@ -1458,6 +1281,21 @@ test('R110：去注释助手不得把正则字面量当成注释（也不许颠�
   // 测试文件自己也要有哨兵（它同样被这个助手扫过）。
   const selfStripped = stripComments(readFileSync(new URL('./page-content.test.mjs', import.meta.url), 'utf8'));
   assert.ok(selfStripped.includes('stripComments'), '本文件去注释之后少了哨兵 stripComments');
+});
+
+test('R122：`of` 当值、`}` 之后是值（这两处以前会真的把代码吃掉）', () => {
+  // ① `of` 曾经在"期待表达式的关键词"表里，于是 `of / 2` 被当成正则开头、后面整段代码被删。
+  const ofCase = "const of = 4; const y = of / 2; const u = 'a///b'; const keep = 1;";
+  assert.equal(stripComments(ofCase), ofCase);
+  // ② `}` 之后没被算成值，`{} / 2` 的除号同样被误判。
+  const braceCase = 'const o = {} / 2; const tail = 1;';
+  assert.equal(stripComments(braceCase), braceCase);
+  // ③ 正面对照：`for (const x of list)` 照旧（`of` 当值不影响它——后面跟的是标识符，不是斜杠）。
+  const forOf = 'for (const x of list) { total += x; } // 注释';
+  assert.equal(stripComments(forOf), 'for (const x of list) { total += x; } ');
+  // ④ `return` / `case` 这些"期待表达式"的关键词仍在表里（它们后面的斜杠确实是正则）。
+  assert.equal(stripComments('return /x/; // c'), 'return /x/; ');
+  assert.equal(stripComments('const a = { k: 1 } / 2; // c'), 'const a = { k: 1 } / 2; ');
 });
 
 test('R109：被扫描的源码里不许出现看不见的字符（零宽空格那类定时炸弹）', () => {

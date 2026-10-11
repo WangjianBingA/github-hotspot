@@ -192,28 +192,17 @@ const cardDetailEntry = (boardId, item) => {
 };
 
 /**
- * 列表上方那句说明的几种说法。
- * R111 / R118 / R120：与抽屉里真有的东西同源，而且**榜级文案只承诺这一榜真的会给出的东西**——
- * 混合榜（有的条目有向导、有的没有）不能对整榜说"拆成三步"；一条事实都没有的榜（稀疏数据）
- * 也不能把「项目基本事实」写进承诺里。
- * @param {string} boardId 榜单 id
- * @param {boolean} boardHasGuide 这一榜里有没有任何一条带安装向导
- * @param {boolean} boardHasFacts 这一榜里有没有任何一条有"项目基本事实"
+ * 列表上方那句说明。
+ *
+ * R111 / R118 / R120 / **R123**：榜级那句话**不枚举具体小节**。理由：榜是"一批条目"，只要榜里
+ * 有任何一条缺某个小节，"这一榜会给你 X"就等于替那条打包票——实测已经撞到两次（稀疏条目的
+ * 「为什么上榜/一句话介绍」、混合榜的「项目基本事实」）。改成不承诺具体内容的通用说法以后，
+ * 这一类缺陷不会再出现。**逐卡**那句仍然按 `hasWhySection` / `hasFactList` 逐条判断（本来就准确）。
  * @returns {string} HTML 片段（纯文本 + 一个链接）
  */
-const cardDetailHintText = (boardId, boardHasGuide, boardHasFacts) => {
-  const tail = '看不懂的地方，先看<a href="prepare.html">新手准备页</a>，从头照着做一遍。';
-  const facts = boardHasFacts ? '、项目基本事实' : '';
-  if (boardId === CLASSIC_ID) {
-    return `点开卡片会打开详情：这个榜按总收藏人数排，所以详情里说的是「${DRAWER_TITLES.classic}」`
-      + `${facts}，以及一句话介绍。` + tail;
-  }
-  const front = boardHasGuide
-    ? `点开卡片会打开详情：有现成安装步骤的项目会把「怎么装」拆成三步，每一步做什么都写清楚了${facts}。`
-    : `点开卡片会打开详情：为什么上榜${facts}、一句话介绍。`
-      + '这个榜上目前没有带现成安装步骤的项目，所以每一条都会指路到它自己的主页。';
-  return front + tail;
-};
+const cardDetailHintText = () => '点开任意一张卡片，都能看到这一条的详情：它是干什么的、'
+  + '我们为什么把它放进这个榜、以及它到底装不装得上。'
+  + '看不懂的地方，先看<a href="prepare.html">新手准备页</a>，从头照着做一遍。';
 
 /** 命令框下面那句提示（真实缺陷：以前没说"失败了怎么办"，用户会以为按钮坏了）。 */
 const COPY_HINT = '按钮会把这一行复制到剪贴板；要是没反应，就自己选中这一行，按 Ctrl 加 C。';
@@ -560,18 +549,15 @@ export function itemCard({ boardId, item }) {
 /**
  * 榜单列表上方那段说明（R102：文案选择属于显示决策，住在纯函数层）。
  *
- * R111：它也要与抽屉里真有的东西一致，所以需要榜单名与"这一榜有没有向导"。
- * 返回的是**纯文本**（可以有链接这种行内标签），外层由调用方包成段落。
- * @param {{ boardId?: string, hasGuide?: boolean }} [input]
+ * R123：这句话**不按榜/按条目的内容变**——它不枚举任何具体小节，所以不存在"替某一条打包票"的问题。
+ * 参数保留是为了不动调用方（也方便将来真有需要时再分口径）。
+ * @param {{ boardId?: string, hasGuide?: boolean, hasFacts?: boolean }} [input]
  * @returns {string} HTML 片段（纯文本 + 一个链接）
  */
 export function cardDetailHint(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
-  return cardDetailHintText(
-    typeof source.boardId === 'string' ? source.boardId : '',
-    source.hasGuide === true,
-    source.hasFacts === true,
-  );
+  void source;
+  return cardDetailHintText();
 }
 
 // ---------- 详情抽屉（Task 17；R25 / R64 / R78 / 置信度 / 转义都在这里定） ----------
@@ -935,12 +921,10 @@ export function buildBoardView(input = {}) {
   }
 
   // 卡片上下的说明语也在这里定（R102）：app.js 只管把它们贴到页面上，自己不写一个字。
-  // R111 / R118 / R120：这句话要按"这一榜实际会给出什么"来给，否则会承诺抽屉里根本没有的小节。
-  const boardHasGuide = items.some((item) => hasInstallGuide(item?.install));
-  const boardHasFacts = items.some((item) => hasFactList(item));
+  // R123：榜级那句**不按内容分口径**（它不枚举小节，也就不可能替某一条打包票）——逐卡那句才按条判断。
   const hints = [
     { key: 'board-note', html: boardNote(boardId) },
-    { key: 'card-detail', html: cardDetailHintText(boardId, boardHasGuide, boardHasFacts) },
+    { key: 'card-detail', html: cardDetailHintText() },
     { key: 'difficulty-filter', html: difficultyFilterHint(boardId) },
   ].filter((hint) => hint.html !== '');
 

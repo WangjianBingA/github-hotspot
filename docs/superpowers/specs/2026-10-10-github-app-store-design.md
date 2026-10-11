@@ -303,7 +303,8 @@ github-hotspot/
 
 **中文说明分（0-7，R143 修订）**：**要么 7 分、要么 0 分**。判据是 `hasChinese`：
 README 里**汉字**占比 ≥ 3%（且假名占比低于阈值），或存在**中文**文件名的本地化文件
-（`README.zh-CN.md` / `README_CN.md` / `README.zh.md` / `docs/*.zh*`），满足任一即给满 7 分。
+（`README.zh-CN.md` / `README_CN.md` / `README.zh.md` / `docs/*.zh*`），满足任一即给满 7 分；
+**非中文的本地化说明不给这一项的分**（只有 `README.ja.md` 这类文档时，这一项是 0 分）。
 代码里的构成是"正文 4 分 + 本地化文件 3 分"（`CHINESE_POINTS`），但两者是同一件事的两种证据，
 所以对外只有 7 或 0 两档，不存在按比例加分。
 

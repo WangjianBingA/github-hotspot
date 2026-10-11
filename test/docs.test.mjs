@@ -29,11 +29,12 @@ const root = (p) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 const read = (p) => readFileSync(root(p), 'utf8');
 const scripts = JSON.parse(read('package.json')).scripts ?? {};
 
-// 文档清单：README、手册、许可证、评分口径页。
+// 文档清单：README、手册、许可证、评分口径页、设计文档。
 const README = 'README.md';
 const MANUAL = 'docs/使用手册.md';
 const LICENSE = 'LICENSE';
 const ABOUT = 'public/about.html';
+const SPEC = 'docs/superpowers/specs/2026-10-10-github-app-store-design.md';
 
 // 把 Markdown 里的行内代码（`npm run demo`）与围栏代码块里的命令行都抠出来。
 // 只认"看起来像命令"的那些：以 npm / node 开头的整行。
@@ -299,26 +300,93 @@ test('R136：口径页三轴那一行、以及手册第 8 节的标题都与 wei
   }
 });
 
-test('R151：三处文档里"中文说明"那条的判据措辞必须与代码一致（只认中文，不认非中文本地化）', () => {
-  // 这条断言补的是 R136/R140 的盲区：那两条只钉**数字**（7 = 4+3），不钉**判据**，
-  // 所以"或者有一份本地化说明文件（例如 README.zh-CN.md）"这种句子能一直活到终审 ——
-  // 它对 R143 之后的口径**不准**（只有 README.ja.md 的项目这一项得 0 分），
-  // 读者很容易把它读成"日文文档照样有这 7 分"。
+// ---------- R151 / R156 / R157：中文说明那条判据的措辞，四份文档一起守 ----------
+//
+// 这条断言补的是 R136/R140 的盲区：那两条只钉**数字**（7 = 4+3），不钉**判据**，
+// 所以"或者有一份本地化说明文件（例如 README.zh-CN.md）"这种句子能一直活到终审 ——
+// 它对 R143 之后的口径**不准**（只有 README.ja.md 的项目这一项得 0 分），
+// 读者很容易把它读成"日文文档照样有这 7 分"。
+//
+// R156：第一版的负向断言是**连串子串**（`!/或者有一份本地化说明文件/`），而源文件在这两段之间
+// 有一个换行 + 8 个空格 —— 也就是说，只要保留原有的折行，评审做的那个变异就能**照旧全绿**。
+// 现在统一先把空白折叠掉：折行、多空格、标签之间的换行都不再能让措辞溜过去。
+// 正向也不能再靠小标题（`<dt>中文说明（满分 7）</dt>` 那种），必须锚到**承载判据的那句话**。
+
+/** 把文本规范化：去 HTML 注释、去加粗标记（HTML 与 Markdown 两种）、把空白折叠成单个空格。 */
+function normalizedDocText(raw) {
+  return String(raw ?? '')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<\/?strong>/g, '')
+    .replace(/\*\*/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * 取出"承载中文说明判据的那一段"。
+ *
+ * R156/R157 的教训（前三版都错在这里）：**锚点必须落在承载判据的那段文字上**，而且取样窗口要
+ * 真的覆盖"判据句 + 后果句"。
+ *  · 第一版拿 `indexOf('中文说明')`：在设计文档里先命中的是 §1.4 那句"徽章与'是否有中文说明'标记"，
+ *    离判据还有十万八千里 —— 与 R141/R151 那两族"锚点取到别处"是同一个病。
+ *  · 第二版按"最先出现的锚点"取：README 里 `中文说明（`（正文在讲徽章那句）比判据词更靠前，
+ *    于是窗口套在徽章那句上，后果句被切在外面 —— 断言看着在测，其实没测到。
+ * 现在按**锚点优先级**取，并且要求选中的窗口里既有判据、也有后果；都不满足时退回第一个候选，
+ * 让断言在缺东西的窗口上红出来（而不是静默取到无关的一处）。
+ * @param {string} text 规范化之后的文档文本
+ * @returns {string} 判据所在的那一段（固定窗口），完全找不到锚点时返回空串
+ */
+function criterionExcerpt(text) {
+  const consequences = /非中文的本地化说明不给这一项的分|这一项是 0 分|这一项拿 0 分|这一项也是 0 分/;
+  const anchors = ['中文说明文件（', '中文说明文件', '中文说明分', '中文说明（'];
+  const windows = [];
+  for (const anchor of anchors) {
+    let from = text.indexOf(anchor);
+    while (from > -1) {
+      windows.push(text.slice(Math.max(0, from - 40), from + 400));
+      from = text.indexOf(anchor, from + anchor.length);
+    }
+  }
+  if (windows.length === 0) return '';
+  return windows.find((w) => consequences.test(w)) ?? windows[0];
+}
+
+test('R151 / R156 / R157：四份文档里"中文说明"那条的判据措辞必须与代码一致（跨折行、含设计文档）', () => {
   const spots = [
-    ['口径页', read(ABOUT).replace(/<!--[\s\S]*?-->/g, '')],
-    ['README', read(README)],
-    ['手册', read(MANUAL)],
+    ['口径页', normalizedDocText(read(ABOUT))],
+    ['README', normalizedDocText(read(README))],
+    ['手册', normalizedDocText(read(MANUAL))],
+    // R157：设计文档也要一起守 —— 上一轮 I6 漂移的就是它，人工修好了但守卫没跟上。
+    ['设计文档', normalizedDocText(read(SPEC))],
   ];
   for (const [label, text] of spots) {
-    // ① 判据必须写成"中文说明"（"说明"后面可以跟"文件"，也可以直接接"就给 7 分"）。
-    //    加粗在口径页里是 <strong>、在 README 里是 **，两种都要认。
-    assert.match(text, /中文(?:\*\*|<\/strong>)?\s*说明(?:文件)?/, `${label} 要把判据写成"中文说明（文件）"`);
-    // ② 不许再把"本地化说明文件"当判据（那正是被误读成"日文也算"的写法）。
-    assert.ok(!/或者有一份本地化说明文件/.test(text), `${label} 还把"本地化说明文件"当判据`);
-    // ③ 后果也要写清楚：非中文的本地化说明**拿不到这一项的分**，不只是不挂徽章。
-    assert.match(text, /非中文的本地化说明不给这一项的分|这一项是 0 分|这一项拿 0 分/,
-      `${label} 要说清"非中文本地化说明拿不到这一项的分"`);
+    const excerpt = criterionExcerpt(text);
+    // ① 锚点必须找得到，而且**锚点那一段**里就要有判据词「中文说明（文件）」。
+    //    变异证明这一条是真的：把 `<strong>中文</strong>说明文件` 换成 `本地化说明文件`
+    //    （无论连成一行还是保留原折行），锚点就取不到了。
+    assert.ok(excerpt !== '', `${label} 里找不到"中文说明（文件）"这段判据（锚点取不到）`);
+    assert.match(excerpt, /中文说明(?:文件)?/, `${label} 的判据那一段里要写"中文说明（文件）"`);
+    // ② 判据那一段里不许出现"本地化说明文件"：跨空白匹配，折行与多空格都挡不住它。
+    //    （全文扫描是第二道；这里只盯判据所在的那一段，所以别处的正常用词不会误伤。）
+    assert.ok(!/或者有一份\s*本地化说明文件|一份\s*本地化说明文件（例如/.test(excerpt),
+      `${label} 的判据那一段里还把"本地化说明文件"当判据`);
+    // ③ 后果也要写清楚，而且必须写在**判据那一段里**（不是文档别处随便一句）：
+    //    非中文的本地化说明**拿不到这一项的分**，不只是不挂徽章。
+    //    四份文档措辞不完全一样，所以认几种等价说法。
+    assert.match(excerpt, /非中文的本地化说明不给这一项的分|这一项是 0 分|这一项拿 0 分|这一项也是 0 分/,
+      `${label} 的判据那一段里要说清"非中文本地化说明拿不到这一项的分"`);
   }
+});
+
+test('R157：设计文档那份还必须明确写出"计分也按 hasChinese"这条修订', () => {
+  const spec = read(SPEC);
+  // 只要这份文档还在教"计分奖励任何本地化"，它就是在教一件代码已经不做的事。
+  assert.ok(!/计分\*\*?口径\*\*?有意奖励"任何本地化"|上面的\*\*计分\*\*口径有意奖励/.test(spec),
+    '设计文档还在说"计分有意奖励任何本地化"');
+  assert.match(spec, /R143（2026-10-11）：这一项从 `hasCjk` 改成 `hasChinese` 计分/,
+    '设计文档要写明 R143 修订');
+  assert.match(spec, /`hasCjk` —— \*\*只用于如实说明\*\*/, '设计文档要把 hasCjk 的角色写对');
+  // 反向：这份文档不许再把 R59 那套旧角色当成现行口径（"hasCjk 是计分输入"）。
+  assert.ok(!/`hasCjk` —— \*\*计分\*\*输入/.test(spec), '设计文档还把 hasCjk 写成"计分输入"');
 });
 
 test('R136：手册与口径页的手抄分档值与 weights.mjs 一致（口碑五项、安装七档、中文两项）', () => {

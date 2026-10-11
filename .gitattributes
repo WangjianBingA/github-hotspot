@@ -1,0 +1,7 @@
+# 换行符纪律（R133 收尾轮加的，只有一条规则，但它防的是一个真会出事的坑）
+#
+# .github/workflows/*.yml 是给 **Linux 上的 GitHub Actions** 读的：`run: |` 里的那段 shell
+# 如果带 \r（CRLF），在 Linux 上会变成语法错（`if ... then\r`、`fi\r`）——工作流会莫名其妙地红。
+# 本机 git 的 core.autocrlf 是 true，默认会把仓库里的 LF 在检出时变成 CRLF；
+# 于是"在 Windows 上改一下这个文件再提交"就可能把 CRLF 带进仓库。这一行把它钉死成 LF。
+*.yml text eol=lf

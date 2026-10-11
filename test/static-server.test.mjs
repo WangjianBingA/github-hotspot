@@ -11,15 +11,18 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolve } from 'node:path';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { createStaticServer } from '../src/http/static-server.mjs';
 
 /**
  * 起一个只服务 public/ 的服务器，返回端口与关闭函数。
+ * @param {object} [options] 额外传给 createStaticServer 的选项（例如 dataRoot）
  * @returns {Promise<{ port: number, close: () => Promise<void> }>}
  */
-async function start() {
-  const server = createStaticServer({ root: 'public' });
+async function start(options = {}) {
+  const server = createStaticServer({ root: 'public', ...options });
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   return {
     port: server.address().port,
@@ -98,6 +101,47 @@ test('只放行读取请求，别的请求方式一律拒绝', async () => {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/`, { method: 'DELETE' });
     assert.equal(r.status, 405);
+  } finally {
+    await close();
+  }
+});
+
+// R127（Task 18）：`serve --demo` 靠 dataRoot 把 /data/ 指向演示数据目录。
+// 这里量的是"服务器的行为"，不是某个调用方：① 映射真的生效；② 站点其余部分照旧来自 public/；
+// ③ 演示目录里没有的文件就是 404（不会偷偷回落到真实数据目录）；④ 穿越防护对新的根同样成立。
+
+test('dataRoot：/data/ 下的文件来自另一个目录，站点其余部分照旧来自 public/', async () => {
+  const demoDir = mkdtempSync(join(tmpdir(), 'hs-dataroot-'));
+  writeFileSync(join(demoDir, 'index.json'), '{"demo":true,"dates":["2026-10-10"]}\n');
+  const { port, close } = await start({ dataRoot: demoDir });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const response = await fetch(`${base}/data/index.json`);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).demo, true);
+
+    // 站点自己的文件照旧从根目录出（只有 /data/ 这一段被换掉）。
+    assert.match(await (await fetch(`${base}/`)).text(), /本周飙升/);
+    assert.equal((await fetch(`${base}/app.js`)).status, 200);
+
+    // 演示目录里没有的日期就是 404：绝不偷偷回落到 public/data（那会把真实数据混进演示站点）。
+    assert.equal((await fetch(`${base}/data/1999-01-01.json`)).status, 404);
+  } finally {
+    await close();
+  }
+});
+
+test('dataRoot：演示数据的路径穿越同样被挡住', async () => {
+  const demoDir = mkdtempSync(join(tmpdir(), 'hs-dataroot-'));
+  writeFileSync(join(demoDir, 'index.json'), '{}\n');
+  const { port, close } = await start({ dataRoot: demoDir });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    for (const url of [`${base}/data/%2e%2e%2fpackage.json`, `${base}/data/%2e%2e%2fapp.js`, `${base}/data/..%2f..%2fpackage.json`]) {
+      const response = await fetch(url);
+      assert.ok([403, 404].includes(response.status), `${url} 应被拒绝，实际 ${response.status}`);
+      assert.ok(!(await response.text()).includes('"name": "github-hotspot"'), `${url} 读到了仓库文件`);
+    }
   } finally {
     await close();
   }

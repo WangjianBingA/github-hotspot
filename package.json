@@ -8,6 +8,7 @@
   "scripts": {
     "test": "node --test",
     "collect": "node src/cli.mjs collect",
+    "collect:offline": "node src/cli.mjs collect --offline",
     "start": "node src/cli.mjs serve",
     "demo": "node src/cli.mjs serve --demo"
   }

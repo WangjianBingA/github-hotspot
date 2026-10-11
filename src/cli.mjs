@@ -2,13 +2,15 @@
 //
 //   collect          采集 GitHub 热门项目，写入 JSON 数据（日报另写 daily/）
 //   collect --offline  不发任何网络请求，用 fixtures/candidates.json 出一份完整榜单
-//   serve / serve --demo  本地静态站点（Task 16 实现）
+//   serve             本地静态站点：服务 public/（数据就是你 public/data/ 里的真实采集产物）
+//   serve --demo      本地静态站点 + 一份自带的演示数据（页面上会写明"这是演示数据"）
 //   export           导出榜单数据（后续任务实现）
 //
 // 分工：本文件只负责"装配"——读环境变量、建网络客户端与缓存、选真实或离线管线，
 // 然后交给 src/collect.mjs 的 runCollect 去编排。**编排逻辑一行都不在这里**，
 // 否则离线测试跑的就成了另一条路径。
-// serve 分支同理：它只负责起一个静态服务器并把地址打出来，不读数据、不改数据（spec §5.1）。
+// serve 分支同理：它只负责把演示数据摆好、起一个静态服务器、把地址打出来，不读也不改任何数据文件
+// （spec §5.1）；服务器本身没有任何接口与模板，页面需要的 JSON 由浏览器自己取。
 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { RateLimitError, createClient } from './net/client.mjs';
@@ -16,6 +18,7 @@ import { createFileCache } from './net/file-cache.mjs';
 import { runCollect } from './collect.mjs';
 import { createOfflineSources, createRealSources } from './sources/pipeline.mjs';
 import { createStaticServer } from './http/static-server.mjs';
+import { seedDemoData } from '../fixtures/demo/seed.mjs';
 
 const USAGE = `用法：node src/cli.mjs <命令>
 
@@ -28,6 +31,7 @@ const USAGE = `用法：node src/cli.mjs <命令>
 
 对应的 npm 脚本：
   npm run collect
+  npm run collect:offline
   npm start
   npm run demo
 `;
@@ -68,17 +72,20 @@ export async function main(argv, options = {}) {
 }
 
 /**
- * serve 分支：起一个只提供 public/ 的静态服务器，把地址打出来，然后一直跑到 Ctrl+C。
+ * 起一个本地预览服务，起好就返回（**不在这里等进程退出**）。
  *
- * 它**不是**一个服务端应用：没有接口、没有模板、不读也不改任何数据文件
- * （spec §5.1、§5.3）。页面需要的 JSON 由浏览器自己 fetch，服务器只负责把文件原样送出去 ——
- * 所以整个 public/ 目录能原样部署到任何静态托管上，本地看到的和线上看到的走的是同一条路。
- * @param {string[]} args 子命令之后的参数（目前只用得到 PORT 环境变量）
- * @param {object} env 环境变量
+ * 为什么抽成一个单独的函数：`serve --demo` 与 `serve` 的差别只有"数据从哪来"这一件事，
+ * 而那件事必须能被端到端验证（起服务、真的取一次 /data/index.json 看是不是演示数据）。
+ * 测试用 `PORT=0` 调它、自己关掉，就能在没有浏览器的环境里验证两种模式。
+ *
+ * 它**不是**一个服务端应用：没有接口、没有模板、不读也不改任何数据文件（spec §5.1、§5.3）。
+ * @param {string[]} args 子命令之后的参数（`--demo` 表示用演示数据）
+ * @param {object} env 环境变量（只用到 PORT）
  * @param {object} logger 日志对象
- * @returns {Promise<number>} 退出码：0 正常关掉，1 端口被占之类起不来
+ * @returns {Promise<{ server: import('node:http').Server, url: string, dataRoot: string|null }>}
+ *   dataRoot 是这一次选用的演示数据目录；真实模式是 null（照常服务 public/data）
  */
-async function serve(args, env, logger) {
+export async function startPreview(args, env, logger) {
   const raw = env.PORT ?? '';
   const parsed = typeof raw === 'string' && raw.trim() !== '' ? Number.parseInt(raw, 10) : DEFAULT_PORT;
   const port = Number.isInteger(parsed) && parsed >= 0 && parsed <= 65535 ? parsed : DEFAULT_PORT;
@@ -86,20 +93,53 @@ async function serve(args, env, logger) {
   // cwd 是那个目录，用 cwd 会服务错文件夹（甚至服务不了任何东西）。
   // URL.pathname 是百分号编码的（本项目的目录名里有空格和中文），必须用 fileURLToPath 转回真实路径。
   const root = fileURLToPath(new URL('../public/', import.meta.url));
-  const server = createStaticServer({ root });
 
-  try {
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(port, '127.0.0.1', resolve);
-    });
-  } catch (error) {
-    logger.error(`起不来本地预览服务：${error?.message ?? error}。换个端口再试：PORT=8766 npm start`);
-    return 1;
+  // R127：演示模式**只**把 /data/ 指向演示数据目录，绝不写进 public/data ——
+  // 否则一次 `npm run demo` 就会在真实数据目录里留下三天演示数据，之后一次 `npm start`
+  // 会把它们当成真实榜单展示（页面上没有任何标注，那就是在说谎）。
+  let dataRoot = null;
+  if (args.includes('--demo')) {
+    // 演示数据落在仓库自己的 data/ 临时区里（data/ 被 gitignore，本来就是放产物的地盘）。
+    dataRoot = fileURLToPath(new URL('../data/demo/', import.meta.url));
+    seedDemoData(dataRoot);
+    logger.log('这一次用的是内置的演示数据（示例），不是刚采集到的真实数据；页面上也会写明这一点。');
   }
 
-  logger.log(`本地预览已启动：http://127.0.0.1:${server.address().port}/`);
-  logger.log('按 Ctrl+C 停掉它。（这个服务只提供 public/ 目录里的文件，没有任何接口。）');
+  const server = createStaticServer({ root, dataRoot });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', resolve);
+  });
+  return { server, url: `http://127.0.0.1:${server.address().port}/`, dataRoot };
+}
+
+/**
+ * serve 分支：起一个只提供 public/（演示模式再加一份演示数据）的静态服务器，
+ * 把地址打出来，然后一直跑到 Ctrl+C。
+ * @param {string[]} args 子命令之后的参数（`--demo`；端口用 PORT 环境变量）
+ * @param {object} env 环境变量
+ * @param {object} logger 日志对象
+ * @returns {Promise<number>} 退出码：0 正常关掉，1 端口被占之类起不来
+ */
+async function serve(args, env, logger) {
+  let preview;
+  try {
+    preview = await startPreview(args, env, logger);
+  } catch (error) {
+    // 端口被占、演示数据文件不在（被人删了）……都收敛成一句人话。
+    // 下一步只给与当下这一种情况对得上的那一个（R99 的同一条道理：建议必须做得到），
+    // 而且写成 PowerShell 里真能照做的样子（`PORT=8766 npm start` 那种写法在这里不成立）。
+    const command = args.includes('--demo') ? 'npm run demo' : 'npm start';
+    const busy = error?.code === 'EADDRINUSE' || error?.code === 'EACCES';
+    logger.error(`起不来本地预览服务：${error?.message ?? error}${busy ? `。换个端口再试：$env:PORT="8766"; ${command}` : ''}`);
+    return 1;
+  }
+  const { server, url, dataRoot } = preview;
+
+  logger.log(`本地预览已启动：${url}`);
+  logger.log(dataRoot === null
+    ? '按 Ctrl+C 停掉它。（这个服务只提供 public/ 目录里的文件，没有任何接口。）'
+    : '按 Ctrl+C 停掉它。（这个服务只提供 public/ 目录与那份演示数据的文件，没有任何接口。）');
 
   // 等它被关掉为止：进程活着，用户才能一直刷页面。
   await new Promise((resolve) => {

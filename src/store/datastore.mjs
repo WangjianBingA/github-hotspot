@@ -87,11 +87,17 @@ export function listDates(dataDir) {
 /**
  * 扫描数据目录里的日报，重写 index.json。
  * @param {string} dataDir 数据目录
+ * @param {{ demo?: boolean }} [options] demo: true 会在清单里写下 `demo: true`。
+ *   这是**演示数据自己声明自己**（R127）：页面据此标注"这是演示数据"，而不是去猜数据内容
+ *   （猜日期、猜分数都会猜错，而且猜错的代价是把演示数据当成真实榜单展示给用户）。
+ *   真实采集不传这个参数，于是真实的清单里根本不会有这个字段。
  * @returns {string[]} 日期列表（降序）
  */
-export function updateIndex(dataDir) {
+export function updateIndex(dataDir, options = {}) {
   const dates = listDates(dataDir);
-  writeJsonAtomic(join(dataDir, 'index.json'), { dates, updatedAt: new Date().toISOString() });
+  const index = { dates, updatedAt: new Date().toISOString() };
+  if (options?.demo === true) index.demo = true;
+  writeJsonAtomic(join(dataDir, 'index.json'), index);
   return dates;
 }
 

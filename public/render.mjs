@@ -103,8 +103,24 @@ const UNKNOWN_LANGUAGE = '__unknown__';
 /** 这一条有没有标注语言（空串与缺失都算"没有标注"）。 */
 const hasLanguage = (item) => typeof item?.language === 'string' && item.language !== '';
 
-/** 本地还没跑过采集时，给新手的那条命令（R99：只写今天真能用的一条）。 */
-const COLLECT_COMMAND = '<code>npm run collect --offline</code>';
+/**
+ * 本地还没跑过采集时，给新手的那条命令（R99：只写今天真能用的一条）。
+ *
+ * 为什么单独有一个 `collect:offline` 脚本，而不是写 `npm run collect --offline`：
+ * npm 会把 `--offline` 当成**它自己的**参数吃掉（npm 确实有一个叫 offline 的配置项），
+ * 传给脚本的只剩 `collect` —— 也就是说那条命令会**联网**跑一整轮采集，与文案里"不联网"正好相反。
+ * 实测过：`npm run collect --offline` 会去请求网络；`npm run collect -- --offline` 才是真正不联网的。
+ * 对从没开过命令行的人来说 `--` 是没法解释的东西，所以包成一个名字说清楚、跑起来也真的是那样的脚本。
+ */
+const COLLECT_COMMAND = '<code>npm run collect:offline</code>';
+
+/**
+ * 演示模式那条建议（R99：命令必须真能用，且下一步要与当下的处境对得上）。
+ * 三处提示共用同一句话：`npm run demo` 会另起一个本地预览，而用户此刻多半已经开着一个
+ * （`npm start` 也占 8765），所以"先停掉当前这个服务"是这句话的一部分，不是可选项。
+ */
+const DEMO_COMMAND_HINT = '<code>npm run demo</code>（一份标着「演示数据」的内置样本，'
+  + '会另起一个本地预览；运行前先按 Ctrl 加 C 停掉当前这个服务）';
 
 // ---------- 详情抽屉的文案（Task 17；每一句都是"显示决策"，所以住在这一层） ----------
 
@@ -836,6 +852,7 @@ export function languageSelectionIsValid(value, facts = {}) {
  *   date?: string,         // 想看的日期（用来把"缺哪一天"说清楚）
  *   dates?: string[],      // 有数据的日期清单（长度决定"换一天"这句建议是否成立）
  *   loading?: boolean,     // 正在读数据（此时给"正在读取"，而不是"读不出来"）
+ *   demo?: boolean,        // 这一份数据是不是演示数据（**显式输入**，不是从数据内容里猜的，R127）
  * }} input
  * @returns {{
  *   items: object[], notices: { key: string, html: string }[],
@@ -881,6 +898,13 @@ export function buildBoardView(input = {}) {
   });
 
   const notices = [];
+  // R127：演示数据先说自己是谁。这句话改变用户怎么读下面每一个数字，所以排在**最前面**，
+  // 而且每一次渲染都重新算——数据还在读、读不出来、切了榜单、换了日期，标注都在。
+  // demo 是调用方显式传进来的事实（数据清单里写着 demo: true），不是这里从数据内容里猜的：
+  // 猜日期、猜分数早晚会猜错，而猜错的代价是把演示数据当成真实榜单展示给用户。
+  if (source.demo === true) {
+    notices.push({ key: 'demo', html: demoNotice(date) });
+  }
   // 顺序即重要性：数据不完整排最前（它影响整页读数），然后才是"这块为什么是空的"。
   if (daily?.degraded === true) {
     notices.push({ key: 'degraded', html: degradedNotice(true, daily.notes) });
@@ -987,15 +1011,17 @@ export function loadingNotice() {
 
 /**
  * 完全没有榜单数据时的提示（index.json 缺失或为空：还没跑过采集）。
- * R99：只给**今天真能用**的命令。`npm run demo` 眼下就是 `serve --demo`，而 `serve` 还不认识
- * `--demo`（Task 18 才实现），写进提示等于指一条走不通的路——所以写的是这条已经跑得通的命令。
+ * R99：只给**今天真能用**的命令。Task 18 起 `npm run demo` 真的能用了（serve --demo 会把一份
+ * 演示数据摆好、端到端服务出来，页面上还写着"这是演示数据"），所以这里可以把它写出来；
+ * 想让**当前这个页面**有数据，走 `npm run collect:offline`（不联网，用内置样本出完整一份）。
+ * 两条命令都在 package.json 里真实存在，测试也会拿 package.json 来核。
  * @returns {string} HTML
  */
 export function noDataNotice() {
   return '<div class="notice notice-empty"><strong>还没有任何榜单数据。</strong>'
     + '这个网站读的是数据文件，需要先跑一次采集才会有内容。'
-    + `第一次用、又不想联网的话，在项目目录里运行 ${COLLECT_COMMAND}（它用内置样本出一份完整数据），`
-    + '然后刷新这个页面。</div>';
+    + `想先看看这个网站长什么样：在项目目录里运行 ${DEMO_COMMAND_HINT}。`
+    + `想让当前这个页面有数据：运行 ${COLLECT_COMMAND}（不联网，用内置样本出一份完整数据），然后刷新这个页面。</div>`;
 }
 
 /**
@@ -1035,4 +1061,89 @@ export function missingDateNotice(date, dateCount) {
     ? '你可以在页面底部换一天再看，或者稍后刷新重试。'
     : `在项目目录里运行 ${COLLECT_COMMAND} 就会有一份数据。`;
   return `<div class="notice notice-empty"><strong>没有读到 ${escapeHtml(day)} 的榜单数据。</strong>${more}</div>`;
+}
+
+// ---------- 演示数据标注与历史归档页（Task 18；R127 / R99） ----------
+
+/** 日期串的形状（YYYY-MM-DD）。只有长这样的字符串才是"可看的一天"。 */
+const DATE_TEXT = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 数据清单（index.json）里的日期：只认日期形状、去重、最新在前。
+ * 两个页面（榜单页与历史归档页）共用这一份口径：否则"能选哪一天"就会出现两套说法
+ * ——比如归档页列出一条点进去什么都没有的日期。
+ * @param {{ dates?: unknown }} [index] 清单对象（缺了、坏了都按"没有日期"处理）
+ * @returns {string[]} 日期列表（YYYY-MM-DD，降序）
+ */
+export function dateList(index) {
+  const dates = asArray(index?.dates).filter((date) => typeof date === 'string' && DATE_TEXT.test(date));
+  // 去重：同一份清单里出现两次的日期只算一天（否则归档页会把它列两遍）。
+  return [...new Set(dates)].sort().reverse();
+}
+
+/**
+ * 演示数据的标注（R127）。这是**诚实性要求**，不是样式问题：
+ * 如果页面一边显示演示数据、一边让用户以为"这些就是今天的热门项目"，那它就是在说假话。
+ * 所以这句话必须说三件事：这是演示数据（示例）、它不是刚采集到的、它代表哪一天。
+ * @param {string} [date] 这一屏代表的日期（外部输入，进正文前转义）
+ * @returns {string} HTML
+ */
+export function demoNotice(date) {
+  const day = typeof date === 'string' && date !== '' ? escapeHtml(date) : '';
+  const what = day === ''
+    ? '这份榜单来自自带的样本'
+    : `它代表 ${day} 这一天的榜单，内容来自自带的样本`;
+  return '<div class="notice notice-demo"><strong>这是演示数据（示例），不是刚采集到的真实数据。</strong>'
+    + `${what}，用来看这个网站长什么样；它不代表最近真的在流行什么。</div>`;
+}
+
+/**
+ * 历史归档页上的同一条标注。归档页列的是日期，不给单个日期，所以说法略有不同。
+ * @returns {string} HTML
+ */
+export function demoArchiveNotice() {
+  return '<div class="notice notice-demo"><strong>这是演示数据（示例），不是刚采集到的真实数据。</strong>'
+    + '下面这些日期来自自带的样本，用来看这个网站长什么样。</div>';
+}
+
+/**
+ * 历史归档页的主体内容（R93：显示决策住在纯函数层，浏览器里验不了的东西就是验不了的东西）。
+ * 四种情况都要说人话，而且**建议必须做得到**（R99 / R104 / R107）：
+ *   · 清单压根没读到 → 说清"读不出来"，不替数据断言"一天都没有"（那是两件事）；
+ *   · 一天都没有     → 说清没有，并给出今天真能用的两条命令（都写在 package.json 里）；
+ *   · 只有一天       → 照实说"只有一天"，给出这一天的入口（不假装还有别的可选）；
+ *   · 多天           → 按最新在前列出每一天，每个日期都能点进去看那一天的榜单。
+ * 认不出的日期一律不列：列出来就是一条点进去什么都没有的链接。
+ * @param {{ loaded?: boolean, dates?: unknown, demo?: boolean }} [input]
+ *   loaded: 清单读到了没有（false = 文件不在或坏了）；dates 来自清单；demo 是显式输入（R127）
+ * @returns {string} HTML
+ */
+export function historyView(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  const dates = dateList(source);
+  const blocks = [];
+  if (source.demo === true) blocks.push(demoArchiveNotice());
+
+  if (source.loaded === false) {
+    // R101 的老毛病：读不到东西时还硬要报一句"没有数据"。文件读不出来与"确实没有这一天"
+    // 是两件事，说混了用户就不知道是自己没采集、还是文件坏了。
+    blocks.push('<p class="empty">往期数据读不出来。这一页要去读同目录下的数据文件，但没读到它'
+      + '（可能还没生成，或者文件被改坏了）。</p>'
+      + `<p>在项目目录里运行 ${DEMO_COMMAND_HINT}，可以先看到一份带标注的演示数据；`
+      + `跑一次 ${COLLECT_COMMAND} 就会有你自己的数据。</p>`);
+  } else if (dates.length === 0) {
+    blocks.push('<p class="empty">还没有任何往期数据。这个网站读的是数据文件，有数据才会有一天可以回看。</p>'
+      + `<p>第一次用、又不想联网的话：在项目目录里运行 ${DEMO_COMMAND_HINT}；`
+      + `想让页面读到自己采集的数据，就运行 ${COLLECT_COMMAND}（不联网，用内置样本出一份完整数据）。</p>`);
+  } else if (dates.length === 1) {
+    blocks.push(`<p>现在只有一天的数据：${escapeHtml(dates[0])}。等采集跑过几天，这里就会长出一份按天排的清单。</p>`
+      + `<p><a href="index.html?date=${escapeAttr(dates[0])}">去看 ${escapeHtml(dates[0])} 这一天的榜单</a></p>`);
+  } else {
+    blocks.push(`<p>一共有 ${dates.length} 天：最新的一天是 ${escapeHtml(dates[0])}。点日期就看那一天的榜单。</p>`
+      + '<ul class="history-list">'
+      + dates.map((date, position) => `<li><a href="index.html?date=${escapeAttr(date)}">${escapeHtml(date)}</a>`
+        + `${position === 0 ? '<span class="history-latest">最新</span>' : ''}</li>`).join('')
+      + '</ul>');
+  }
+  return blocks.join('');
 }

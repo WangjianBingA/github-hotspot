@@ -121,6 +121,9 @@ main { max-width: 900px; margin: 0 auto; }
 .notice { padding: 14px 18px; margin: 18px 0; border-radius: var(--radius); border: 1px solid; }
 .notice-degraded { background: var(--yellow-bg); border-color: #f5e08a; }
 .notice-empty { background: #eef3ff; border-color: #b6cffb; }
+/* 演示数据的标注（R127）：必须显眼——它改变用户怎么读整页的每一个数字。
+   用与其它提示不同的颜色，免得被当成又一条普通的说明滑过去。 */
+.notice-demo { background: #f3f0ff; border-color: #d9cffb; }
 .notice-notes { margin: 8px 0 0; padding-left: 20px; font-size: 15px; color: var(--ink-soft); }
 .empty { margin: 18px 0; padding: 14px 18px; background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius); color: var(--ink-soft); }
 
@@ -235,6 +238,33 @@ main { max-width: 900px; margin: 0 auto; }
 }
 .guide-card .tip > ul { margin: 8px 0 0; }
 .plain-list { padding-left: 20px; }
+
+/* ---------- 历史归档页（history.html；与其它页面共用本文件） ---------- */
+
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0;
+  display: grid;
+  gap: 8px;
+  max-width: 900px;
+}
+.history-list li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.history-list a { color: var(--brand); font-weight: 600; }
+.history-latest {
+  font-size: 14px; color: var(--green);
+  background: var(--green-bg); border: 1px solid #aceebb;
+  border-radius: 999px; padding: 1px 10px;
+}
+
+/* 评分口径页用的一栏说明（reuse .fact-list：两列的对齐方式正是"项目名 + 说明"要的样子）。 */
+.guide-card .fact-list { margin: 10px 0 14px; font-size: 16px; }
 
 .site-foot { max-width: 900px; margin: 32px auto 0; color: var(--ink-soft); font-size: 15px; }
 .site-foot a { color: var(--brand); }

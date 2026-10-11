@@ -19,6 +19,7 @@ import {
   COPY_DONE_TEXT,
   COPY_FAIL_TEXT,
   buildBoardView,
+  dateList,
   detailDrawer,
   escapeAttr,
   escapeHtml,
@@ -44,6 +45,8 @@ const BOARD_IDS = new Set(['weekly', 'newbie', 'classic']);
  * 页面状态。它只存**原始事实**（哪一天、哪个榜、勾了什么、数据是什么、是不是还在读），
  * 不存"该显示哪些卡片"——那由 buildBoardView 每次现算，避免状态与界面各说各话。
  * view 是上一轮算出来的结果，只用于 renderControls 贴那句筛选说明，不参与任何判断。
+ * demo 是**数据清单自己写的**一位（R127）：演示数据在 index.json 里显式声明自己是演示数据，
+ * 页面把它原样交给渲染层，既不猜也不推断（猜错的代价是把演示数据当成真实榜单展示）。
  */
 const state = {
   dates: [],
@@ -52,6 +55,7 @@ const state = {
   filters: { easy: false, chinese: false, language: '' },
   daily: null,
   dailyLoading: false,
+  demo: false,
   view: null,
 };
 
@@ -144,6 +148,8 @@ function computeView() {
     date: state.date,
     dates: state.dates,
     loading: state.dailyLoading,
+    // R127：这一位直接来自数据清单里的显式声明（见 boot），不在这里做任何推断。
+    demo: state.demo,
   });
 }
 
@@ -466,13 +472,17 @@ async function loadDaily() {
  * 启动：读日期清单 → 定下要看的日期 → 渲染。
  * 日期清单为空**不在这里挑提示**（R102）：让 loadDaily 走同一条渲染路径，
  * 由 buildBoardView 在 `dates` 为空时说"还没有任何榜单数据"。
+ * 日期清单与"这是不是演示数据"都来自同一份清单（index.json）：
+ * 日期怎么认（形状、去重、最新在前）由 render.mjs 的 dateList 给，这里不另立一套口径。
  */
 async function boot() {
   const index = await getJson(`${DATA_BASE}index.json`);
-  const dates = Array.isArray(index?.dates) ? index.dates.filter((d) => typeof d === 'string' && d !== '') : [];
-  state.dates = dates;
+  state.dates = dateList(index);
+  // R127：演示数据在清单里显式声明自己是演示数据（`demo: true`），页面据此标注。
+  // 真实采集不会写这一位，所以真实的清单永远不会被标成演示数据。
+  state.demo = index?.demo === true;
   const wanted = dateFromUrl();
-  state.date = dates.includes(wanted) ? wanted : (dates[0] ?? '');
+  state.date = state.dates.includes(wanted) ? wanted : (state.dates[0] ?? '');
   state.boardId = boardFromUrl() || 'weekly';
   await loadDaily();
 }

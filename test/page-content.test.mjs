@@ -556,10 +556,24 @@ test('R98：外部输入进 HTML 前一律转义（属性与正文两条通道�
 
 test('R99：无数据提示只给今天真能用的命令', () => {
   const notice = noDataNotice();
-  assert.match(notice, /npm run collect --offline/);
-  // `npm run demo` 今天是 `serve --demo`，而 serve 还不认识 --demo：不能指一条走不通的路。
-  assert.ok(!notice.includes('npm run demo'), '不能推荐一条现在跑不通的命令');
   assert.match(notice, /还没有任何榜单数据/);
+  // 为什么是 `collect:offline` 而不是 `npm run collect --offline`：后者里的 `--offline` 会被 npm
+  // 当成它自己的参数吃掉（npm 真有这个配置项），实际跑的是**联网**采集——与文案里的"不联网"相反。
+  // 实测：`npm run collect --offline` 会去请求网络；`npm run collect -- --offline` 才不联网。
+  // 所以文案只写这个真的照它说的跑的脚本。
+  assert.match(notice, /npm run collect:offline/);
+
+  // Task 18 之前这里禁止提 `npm run demo`：那时 serve 还不认识 --demo，写进提示等于指一条走不通的路。
+  // 现在 `serve --demo` 真的能把演示站点起起来（test/demo.test.mjs 里端到端跑过一遍），
+  // 所以文案必须把它写出来（用户该知道有这条路），而且要说清看到的是演示数据。
+  assert.match(notice, /npm run demo/);
+  assert.match(notice, /演示数据/);
+
+  // 更强的判据：文案里出现的每一条命令都必须在 package.json 里真的存在。
+  // 推荐一条不存在的脚本，与推荐一条跑不通的脚本是同一类谎话。
+  const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).scripts ?? {};
+  const commands = [...notice.matchAll(/npm run ([a-z:-]+)/g)].map((match) => match[1]);
+  for (const name of new Set(commands)) assert.ok(name in scripts, `推荐了不存在的脚本：${name}`);
 });
 
 test('R100：统计文案说的是当前看得见的条数', () => {
@@ -628,7 +642,7 @@ test('R104：只有一天数据时不得建议换一天', () => {
   const oneDate = buildBoardView({ boardId: 'weekly', items: [], daily: null, date: '2026-10-10', dates: ['2026-10-10'] });
   assert.match(noticeOf(oneDate, 'date-missing').html, /2026-10-10/);
   assert.ok(!noticeOf(oneDate, 'date-missing').html.includes('换一天'), '只有一天数据时日期选择器是隐藏的，不能建议换一天');
-  assert.match(noticeOf(oneDate, 'date-missing').html, /npm run collect --offline/);
+  assert.match(noticeOf(oneDate, 'date-missing').html, /npm run collect:offline/);
 
   const manyDates = buildBoardView({ boardId: 'weekly', items: [], daily: null, date: '2026-10-09', dates: ['2026-10-10', '2026-10-09'] });
   assert.match(noticeOf(manyDates, 'date-missing').html, /换一天/);
@@ -1123,9 +1137,8 @@ test('新手准备页教人打开命令行、确认 Node/Python、把命令粘�
   // 回到榜单与三项命令行的基本安全提醒。
   assert.match(html, /href="index\.html"/);
   assert.match(text, /不要/);
-  // 页面本身不许出现行话，也不引用还不存在的页面（about.html 是 Task 18 的）。
+  // 页面本身不许出现行话。
   assert.ok(!/\bstar\b|\bfork\b|\bissue\b/i.test(html));
-  assert.doesNotMatch(html, /about\.html/);
 });
 
 test('prepare.html 与首页同源共用 style.css（静态服务器直接送，没有服务端逻辑）', async () => {
@@ -1151,15 +1164,18 @@ test('抽屉与准备页都已就位，文案指向的页面真实存在（不�
   const files = new Set(readdirSync(new URL('../public', import.meta.url)));
   // 只认**页面里真正的 href**，不认"这段源码里提过这个文件名"（本文件自己的断言文字里也会提到它，
   // 拿字符串包含来判断等于在测自己写的那句话，不是在测页面）。
-  const surfaces = [read('index.html'), read('render.mjs'), read('prepare.html')].join('\n');
+  // Task 18 起 about.html 与 history.html 都存在了，所以这里不再有任何豁免：
+  // 页面上出现的每一个 .html 链接都必须真的有那个文件。
+  const surfaces = [read('index.html'), read('render.mjs'), read('prepare.html'), read('about.html'),
+    read('history.html'), read('history.js')].join('\n');
   const links = [...surfaces.matchAll(/href="([^"#?]+\.html)/g)].map((match) => match[1]);
   assert.ok(links.includes('prepare.html'), '新手准备页的入口要在页面上');
+  assert.ok(links.includes('about.html'), '评分口径页的入口要在页面上');
+  assert.ok(links.includes('history.html'), '历史归档页的入口要在页面上');
   for (const link of new Set(links)) {
-    // about.html 是 Task 18 的东西：现在页脚已经指着它，但本任务不负责建它。
-    if (link === 'about.html') continue;
     assert.ok(files.has(link), `页面指向了不存在的 ${link}`);
   }
-  assert.ok(files.has('prepare.html'));
+  for (const page of ['prepare.html', 'about.html', 'history.html']) assert.ok(files.has(page));
 });
 
 // ---------- ⑬ R106 / R107 / R108：三条已存在的缺陷 ----------
@@ -1311,7 +1327,9 @@ test('R109：被扫描的源码里不许出现看不见的字符（零宽空格�
   // 这里把几个常见的不可见字符全局扫一遍（含被改过的每个文件）。
   const invisible = ['\u200b', '\u200c', '\u200d', '\ufeff', '\u2060', '\u00a0'];
   const names = ['U+200B 零宽空格', 'U+200C', 'U+200D', 'U+FEFF', 'U+2060', 'U+00A0 不换行空格'];
-  const files = ['index.html', 'app.js', 'render.mjs', 'style.css', 'prepare.html'];
+  // Task 18 新增的两个页面与一段脚本也一起扫：它们同样是用户要看的东西。
+  const files = ['index.html', 'app.js', 'render.mjs', 'style.css', 'prepare.html',
+    'about.html', 'history.html', 'history.js'];
   const surfaces = files.map((file) => [file, read(file)]);
   surfaces.push(['test/page-content.test.mjs', readFileSync(new URL('./page-content.test.mjs', import.meta.url), 'utf8')]);
   for (const [file, text] of surfaces) {
@@ -1323,7 +1341,7 @@ test('R109：被扫描的源码里不许出现看不见的字符（零宽空格�
     }
   }
   // 正面对照：扫的对象确实读到了东西（否则这条断言会空转成永久绿）。
-  assert.equal(surfaces.length, 6);
+  assert.equal(surfaces.length, 9);
   assert.ok(surfaces.every(([, text]) => text.length > 500));
 });
 
@@ -1333,7 +1351,7 @@ test('R107：数据形状不对时，建议必须与用户当下能做的事一�
   assert.match(oneDate, /读不出来/);
   assert.ok(!oneDate.includes('换一天'), '只有一天数据时不能建议换一天');
   assert.ok(!oneDate.includes('日期选择器'), '选择器没显示，就不能提它');
-  assert.match(oneDate, /npm run collect --offline/);
+  assert.match(oneDate, /npm run collect:offline/);
 
   // 有两天以上时才提日期选择器。
   const manyDates = dataErrorNotice(2);
@@ -1345,7 +1363,7 @@ test('R107：数据形状不对时，建议必须与用户当下能做的事一�
     const notice = dataErrorNotice(unknown);
     assert.ok(!notice.includes('没有别的日期可换'), `天数未知（${String(unknown)}）时不得断言只有一份数据`);
     assert.ok(!notice.includes('日期选择器换一天看看'), `天数未知（${String(unknown)}）时不得给确定建议`);
-    assert.match(notice, /npm run collect --offline/);
+    assert.match(notice, /npm run collect:offline/);
   }
   // 只有一天时（确实知道）才把"没有别的日期可换"说明白。
   assert.match(dataErrorNotice(1), /没有别的日期可换/);

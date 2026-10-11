@@ -50,9 +50,10 @@ const READ_METHODS = new Set(['GET', 'HEAD']);
  * 请求路径 → 服务根目录里的绝对文件路径。
  * @param {string} root 服务根目录（绝对路径）
  * @param {string} pathname URL 的路径部分
+ * @param {string|null} [dataRoot] 演示模式：`/data/` 这一段换成这个目录（Task 18 / R127）
  * @returns {{ filePath: string } | { error: number }} 越界返回 error: 403，路径解不开返回 400
  */
-function resolveTarget(root, pathname) {
+function resolveTarget(root, pathname, dataRoot = null) {
   let decoded;
   try {
     decoded = decodeURIComponent(pathname);
@@ -64,19 +65,31 @@ function resolveTarget(root, pathname) {
   // 免得 `/..%5cpackage.json`（解码成 `..\package.json`）绕过包含判定。
   const relative = decoded.replace(/\\/g, '/').replace(/^\/+/, '');
 
+  // 演示模式（R127）：只把 `/data/` 这一段换成另一个静态根，文件照样原样送出。
+  // 注意包含判定的基准也跟着换：换根之后 `/data/..%2fapp.js` 会落到 dataRoot 之外，
+  // 必须按 dataRoot 判越界（按原来的 root 判会把它当成"站点目录里的正常文件"放出去）。
+  const underData = dataRoot !== null && (relative === 'data' || relative.startsWith('data/'));
+  const base = underData ? dataRoot : root;
+  const rest = underData ? relative.slice('data'.length).replace(/^\/+/, '') : relative;
+
   // 关键的一步：真正解析成绝对路径，再和根目录比对。`..` 在这里才现形。
-  const target = resolve(root, relative);
-  if (target !== root && !target.startsWith(root + sep)) return { error: 403 };
+  const target = resolve(base, rest);
+  if (target !== base && !target.startsWith(base + sep)) return { error: 403 };
   return { filePath: target };
 }
 
 /**
  * 创建静态服务器（**没有**调用 listen，端口由调用方决定）。
- * @param {{ root?: string }} [options] root 是要原样提供的目录，默认 public/（相对进程工作目录）
+ * @param {{ root?: string, dataRoot?: string }} [options]
+ *   root：要原样提供的目录，默认 public/（相对进程工作目录）；
+ *   dataRoot：可选，把 `/data/` 这一段指向另一个目录 —— `serve --demo` 用它提供演示数据
+ *   （R127）。这**不是**服务端逻辑：服务器照旧只做读文件、判越界、目录补 index.html、按扩展名给
+ *   Content-Type，没有接口、没有模板、不加工任何数据。
  * @returns {import('node:http').Server} http.Server 实例
  */
 export function createStaticServer(options = {}) {
   const root = resolve(options.root ?? 'public');
+  const dataRoot = typeof options.dataRoot === 'string' && options.dataRoot !== '' ? resolve(options.dataRoot) : null;
 
   return createServer(async (req, res) => {
     const send = (status, headers = {}, body) => {
@@ -98,7 +111,7 @@ export function createStaticServer(options = {}) {
       return;
     }
 
-    const target = resolveTarget(root, pathname);
+    const target = resolveTarget(root, pathname, dataRoot);
     if (target.error) {
       send(target.error, { 'content-type': 'text/plain; charset=utf-8' }, target.error === 403 ? '这个地址不在网站目录里。' : '看不懂这个地址。');
       return;

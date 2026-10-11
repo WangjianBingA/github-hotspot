@@ -1,0 +1,47 @@
+<!-- 合成夹具（非真实抓取）：模拟 github.com/trending 改版后的 DOM —— 仓库卡片换成 div.explore-repo-card，增量改成 "+321" 这类文案。 -->
+<!DOCTYPE html>
+<html lang="en">
+  <body>
+    <main class="explore-trending">
+      <header class="explore-header">
+        <h1>Trending</h1>
+        <nav class="explore-tabs">
+          <a href="/trending?since=daily" class="explore-tab is-selected">Today</a>
+          <a href="/trending?since=weekly" class="explore-tab">This week</a>
+        </nav>
+      </header>
+
+      <div class="explore-results" data-hpc>
+        <div class="explore-repo-card">
+          <div class="explore-repo-card__rank">1</div>
+          <div class="explore-repo-card__body">
+            <h3 class="explore-repo-card__title">
+              <a href="/acme/widget">acme / widget</a>
+            </h3>
+            <p class="explore-repo-card__summary">A redesigned card layout that reuses none of the old row markup.</p>
+            <ul class="explore-repo-card__metrics">
+              <li class="metric metric--stars"><span class="metric__label">Stars</span><span class="metric__value">12,345</span></li>
+              <li class="metric metric--forks"><span class="metric__label">Forks</span><span class="metric__value">678</span></li>
+              <li class="metric metric--gain"><span class="metric__label">Gained</span><span class="metric__value">+321</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="explore-repo-card">
+          <div class="explore-repo-card__rank">2</div>
+          <div class="explore-repo-card__body">
+            <h3 class="explore-repo-card__title">
+              <a href="/acme/gadget">acme / gadget</a>
+            </h3>
+            <p class="explore-repo-card__summary">Second card, same redesigned markup.</p>
+            <ul class="explore-repo-card__metrics">
+              <li class="metric metric--stars"><span class="metric__label">Stars</span><span class="metric__value">9,876</span></li>
+              <li class="metric metric--forks"><span class="metric__label">Forks</span><span class="metric__value">543</span></li>
+              <li class="metric metric--gain"><span class="metric__label">Gained</span><span class="metric__value">+210</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

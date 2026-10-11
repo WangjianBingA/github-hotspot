@@ -1,0 +1,280 @@
+/* GitHub 好玩榜 —— 页面样式（纯 CSS，没有框架、没有外链字体、没有构建步骤）。
+   目标用户是"没打开过终端的人"：字号偏大、行距宽松、颜色对比明确，
+   桌面上是单列宽卡片，手机上自动收窄（spec §12：桌面优先，但手机上也要看得下去）。 */
+
+:root {
+  --ink: #1b1f24;
+  --ink-soft: #57606a;
+  --line: #d8dee4;
+  --bg: #f6f8fa;
+  --card: #ffffff;
+  --brand: #2f6feb;
+  --green: #1a7f37;
+  --green-bg: #dafbe1;
+  --yellow: #9a6700;
+  --yellow-bg: #fff8c5;
+  --red: #b42318;
+  --red-bg: #ffebe9;
+  --radius: 12px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 16px 48px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.7;
+  font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, -apple-system, sans-serif;
+}
+
+.site-head { max-width: 900px; margin: 0 auto; padding: 28px 0 8px; }
+.site-head h1 { margin: 0 0 6px; font-size: 30px; }
+.tagline { margin: 0; color: var(--ink-soft); }
+
+.tabs { max-width: 900px; margin: 20px auto 0; display: flex; flex-wrap: wrap; gap: 10px; }
+.tab {
+  flex: 1 1 220px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 18px; font-weight: 600; color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+.tab:hover { border-color: var(--brand); }
+.tab[aria-selected="true"] { border-color: var(--brand); background: #eef3ff; }
+.tab-note { font-size: 14px; font-weight: 400; color: var(--ink-soft); }
+
+.filters {
+  max-width: 900px; margin: 16px auto 0;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.filter-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.filter-check input { width: 18px; height: 18px; }
+.filter-select { display: flex; align-items: center; gap: 8px; }
+.filter-select select { font-size: 16px; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: #fff; }
+.filter-count { margin-left: auto; color: var(--ink-soft); font-size: 15px; }
+
+main { max-width: 900px; margin: 0 auto; }
+.board-head { margin: 22px 0 6px; font-size: 22px; }
+.board-sub { margin: 0 0 14px; color: var(--ink-soft); }
+
+.loading { margin: 28px 0; color: var(--ink-soft); }
+
+.card {
+  display: flex; gap: 14px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.card .rank { font-size: 26px; font-weight: 700; color: var(--ink-soft); min-width: 42px; }
+.card-body { flex: 1; min-width: 0; }
+.card-title { margin: 0 0 4px; font-size: 21px; }
+.card-desc { margin: 0 0 10px; }
+
+.badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 14px; border: 1px solid transparent; }
+.badge-green { background: var(--green-bg); color: var(--green); border-color: #aceebb; }
+.badge-yellow { background: var(--yellow-bg); color: var(--yellow); border-color: #f5e08a; }
+.badge-red { background: var(--red-bg); color: var(--red); border-color: #ffc9c4; }
+.badge-cn { background: #eef3ff; color: var(--brand); border-color: #b6cffb; }
+.badge-cn-alt { background: #f3f0ff; color: #5a3fc0; border-color: #d9cffb; }
+
+.meta-line { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--ink-soft); font-size: 15px; }
+.growth { font-weight: 600; color: var(--ink); }
+.growth-estimated { color: var(--yellow); }
+.growth-unknown { font-weight: 400; font-style: normal; }
+.fact-label { color: var(--ink-soft); }
+.fact-label::after { content: "："; }
+
+.score-summary { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 15px; }
+.score-total { font-weight: 600; }
+.axis-name::after { content: " "; }
+
+.reasons { margin: 10px 0 0; padding-left: 20px; color: var(--ink-soft); font-size: 15px; }
+.reasons li { margin-bottom: 2px; }
+
+.card-actions { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 15px; }
+.card-actions a { color: var(--brand); }
+.hint { color: var(--ink-soft); }
+.growth-3d { font-weight: 400; }
+
+.score-bars { margin: 10px 0; }
+.bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 15px; }
+.bar-label { width: 76px; color: var(--ink-soft); }
+.bar-track { flex: 1; height: 10px; background: #eaeef2; border-radius: 999px; overflow: hidden; }
+.bar-fill { display: block; height: 100%; background: var(--brand); }
+.bar-value { width: 48px; text-align: right; }
+
+.notice { padding: 14px 18px; margin: 18px 0; border-radius: var(--radius); border: 1px solid; }
+.notice-degraded { background: var(--yellow-bg); border-color: #f5e08a; }
+.notice-empty { background: #eef3ff; border-color: #b6cffb; }
+/* 演示数据的标注（R127）：必须显眼——它改变用户怎么读整页的每一个数字。
+   用与其它提示不同的颜色，免得被当成又一条普通的说明滑过去。 */
+.notice-demo { background: #f3f0ff; border-color: #d9cffb; }
+.notice-notes { margin: 8px 0 0; padding-left: 20px; font-size: 15px; color: var(--ink-soft); }
+.empty { margin: 18px 0; padding: 14px 18px; background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius); color: var(--ink-soft); }
+
+.date-picker { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.date-picker select { font-size: 15px; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: #fff; }
+
+/* ---------- 详情抽屉（Task 17） ---------- */
+
+.drawer {
+  position: fixed; inset: 0; z-index: 20;
+  background: rgba(27, 31, 36, 0.45);
+  display: flex; justify-content: flex-end;
+}
+/* hidden 必须真的藏住：这一条不写，display:flex 会盖过 hidden 的默认样式。 */
+.drawer[hidden] { display: none; }
+
+.drawer-panel {
+  position: relative;
+  width: min(560px, 100%);
+  height: 100%;
+  overflow-y: auto;
+  padding: 22px 22px 40px;
+  background: var(--card);
+  box-shadow: -8px 0 24px rgba(27, 31, 36, 0.18);
+}
+.drawer-close {
+  position: absolute; top: 12px; right: 14px;
+  width: 40px; height: 40px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: #fff; color: var(--ink);
+  font-size: 22px; line-height: 1; cursor: pointer;
+}
+.drawer-close:hover { border-color: var(--brand); color: var(--brand); }
+
+.drawer-title { margin: 0 34px 2px 0; font-size: 24px; }
+.drawer-path { margin: 0 0 10px; color: var(--ink-soft); font-size: 15px; word-break: break-all; }
+.drawer-desc { margin: 10px 0 0; }
+
+.drawer-section { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+.section-title { margin: 0 0 10px; font-size: 18px; }
+.section-note { margin: 0 0 10px; color: var(--ink-soft); font-size: 15px; }
+
+.install-steps { margin: 0; padding-left: 0; list-style: none; counter-reset: none; }
+.install-step { margin-bottom: 16px; }
+.step-title { margin: 0 0 6px; font-size: 16px; }
+.step-line { margin: 0 0 8px; }
+
+.install-command {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: #eaeef2;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.install-command-text {
+  flex: 1 1 220px;
+  background: transparent; padding: 0;
+  font-size: 15px; word-break: break-all;
+  white-space: pre-wrap;
+}
+.copy-button, .download-button {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 1px solid var(--brand); border-radius: 999px;
+  background: #fff; color: var(--brand);
+  font-size: 15px; font-family: inherit; text-decoration: none; cursor: pointer;
+}
+.copy-button:hover, .download-button:hover { background: #eef3ff; }
+.copy-hint { margin: 4px 0 0; color: var(--ink-soft); font-size: 14px; }
+
+.faq { margin-top: 10px; }
+.faq summary { cursor: pointer; font-weight: 600; }
+.faq-list { margin: 10px 0 0; font-size: 15px; }
+.faq-list dt { font-weight: 600; margin-top: 10px; }
+.faq-list dd { margin: 2px 0 0; color: var(--ink-soft); }
+
+.drawer-reasons { margin-top: 8px; }
+.fact-list { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 15px; }
+.fact-list dt { color: var(--ink-soft); }
+.fact-list dd { margin: 0; }
+.drawer-growth { margin: 16px 0 0; font-weight: 600; }
+.drawer-evidence { margin: 6px 0 0; color: var(--ink-soft); font-size: 15px; }
+.drawer-actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 20px; }
+.drawer-actions a, .drawer-actions .project-link, .drawer-actions .prepare-link { color: var(--brand); }
+.drawer-foot { margin: 18px 0 0; color: var(--ink-soft); font-size: 14px; }
+
+/* 卡片是键盘可达的（tabindex="0"），所以给一个看得见的焦点圈，别让人找不到自己在哪。 */
+.card:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
+
+/* ---------- 新手准备页（prepare.html；与首页共用本文件，不另起一套样式） ---------- */
+
+.guide-card {
+  max-width: 900px;
+  margin: 18px auto 0;
+  padding: 18px 22px 22px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.guide-card h2 { margin: 0 0 10px; font-size: 22px; }
+.guide-card h3 { margin: 18px 0 6px; font-size: 18px; }
+.guide-card ol, .guide-card ul { padding-left: 22px; }
+.guide-card li { margin-bottom: 6px; }
+.guide-card .tip {
+  margin: 14px 0 0;
+  padding: 12px 16px;
+  background: #eef3ff;
+  border: 1px solid #b6cffb;
+  border-radius: 10px;
+  font-size: 16px;
+}
+.guide-card .tip > ul { margin: 8px 0 0; }
+.plain-list { padding-left: 20px; }
+
+/* ---------- 历史归档页（history.html；与其它页面共用本文件） ---------- */
+
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0;
+  display: grid;
+  gap: 8px;
+  max-width: 900px;
+}
+.history-list li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.history-list a { color: var(--brand); font-weight: 600; }
+.history-latest {
+  font-size: 14px; color: var(--green);
+  background: var(--green-bg); border: 1px solid #aceebb;
+  border-radius: 999px; padding: 1px 10px;
+}
+
+/* 评分口径页用的一栏说明（reuse .fact-list：两列的对齐方式正是"项目名 + 说明"要的样子）。 */
+.guide-card .fact-list { margin: 10px 0 14px; font-size: 16px; }
+
+.site-foot { max-width: 900px; margin: 32px auto 0; color: var(--ink-soft); font-size: 15px; }
+.site-foot a { color: var(--brand); }
+.foot-line { margin: 4px 0; }
+
+code { background: #eaeef2; padding: 1px 6px; border-radius: 6px; font-size: 15px; }
+
+@media (max-width: 560px) {
+  body { font-size: 16px; padding: 0 12px 40px; }
+  .card { flex-direction: column; gap: 4px; }
+  .card .rank { font-size: 20px; }
+  .filter-count { margin-left: 0; }
+}

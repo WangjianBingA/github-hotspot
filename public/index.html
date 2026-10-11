@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHub 好玩榜 · 三个榜，告诉你好玩的项目怎么装</title>
+<!-- 零依赖、零构建：没有框架、没有 CDN、没有外链字体，联网与否都能打开（spec §5.1）。 -->
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-head">
+  <h1>GitHub 好玩榜</h1>
+  <p class="tagline">把 GitHub 上好玩的项目挑出来，用大白话告诉你是干什么的、你到底装不装得上。</p>
+</header>
+
+<nav class="tabs" id="tabs" role="tablist" aria-label="榜单切换">
+  <!-- 三个榜签是页面自带的：JS 还没跑起来（或数据没加载完）时也看得见，用户不会面对一片空白。 -->
+  <button class="tab" role="tab" data-board="weekly" aria-selected="true">🔥 本周飙升<span class="tab-note">最近大家在玩什么</span></button>
+  <button class="tab" role="tab" data-board="newbie" aria-selected="false">🌟 新手能玩<span class="tab-note">哪些我真能装上</span></button>
+  <button class="tab" role="tab" data-board="classic" aria-selected="false">🏆 经典必玩<span class="tab-note">GitHub 上早就有的好东西</span></button>
+</nav>
+
+<section class="filters" id="filters" aria-label="筛选条">
+  <label class="filter-check"><input type="checkbox" id="filter-easy"> 🟢 一键就能玩</label>
+  <label class="filter-check"><input type="checkbox" id="filter-cn"> 🈶 有中文说明</label>
+  <label class="filter-select">语言
+    <select id="filter-language">
+      <option value="">全部语言</option>
+    </select>
+  </label>
+  <span class="filter-count" id="board-stats" role="status"></span>
+</section>
+
+<main id="board">
+  <!-- 数据到位之前先说明"在做什么"，而不是留一块空白让人以为网站坏了。 -->
+  <p class="loading">正在读取榜单数据……</p>
+</main>
+
+<!--
+  详情抽屉的壳（Task 17）。内容由 app.js 把 render.mjs 里 detailDrawer 的结果贴进 #drawer-body，
+  这里只放"哪些东西不随内容变"的零件：遮罩层、关闭按钮。
+  为什么自带 hidden：页面刚打开、JS 还没跑（或者跑挂了）时，抽屉里是空的；
+  没有 hidden 的话它会盖在榜单上，用户看到一块什么都不显示的面板。
+  hidden 是唯一的事实来源（不用 class 切换），所以 CSS 里写了 [hidden] 这一条来保证真的藏住。
+  为什么不用 HTML 自带的弹层元素（dialog）：它在较老的浏览器里不可用，这个项目零依赖、也没有垫片，
+  宁可用最土的办法。
+  role="dialog" 与 aria-modal 让读屏软件知道"这里弹出来一层，先看它"。
+-->
+<section id="drawer" class="drawer" role="dialog" aria-modal="true" aria-label="项目详情" aria-hidden="true" hidden>
+  <div class="drawer-panel">
+    <button type="button" class="drawer-close" data-drawer-close aria-label="关闭详情">×</button>
+    <div class="drawer-body" id="drawer-body"></div>
+  </div>
+</section>
+
+<footer class="site-foot">
+  <p class="foot-line">数据来自 GitHub 的公开信息；每跑一次采集就会写入那一天的数据，这个网站自己不会去采集。收藏、安装方式这些数字都标了它是怎么来的。</p>
+  <p class="foot-line">带「约」和「估算」的是我们推算出来的，带「实测」的是我们前后两次记录相减量出来的，带「GitHub 官方数据」的是官方页面自己写的数字。</p>
+  <p class="foot-line"><a href="about.html">关于评分口径</a> · <a href="history.html">历史归档</a> · 想装东西但没开过命令行？先看<a href="prepare.html">新手准备页</a>。</p>
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

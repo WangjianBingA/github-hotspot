@@ -1,0 +1,789 @@
+[
+  {
+    "repo": {
+      "ownerRepo": "Zed/x",
+      "description": "同分对照项目三，名字以大写字母开头，用来暴露按语言环境排序的不确定性",
+      "language": "Go",
+      "stars": 5000,
+      "forks": 300,
+      "openIssues": 20,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1600,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "apple/y",
+      "description": "同分对照项目四，名字以小写字母开头，码点序必须排在大写之后",
+      "language": "Go",
+      "stars": 5000,
+      "forks": 300,
+      "openIssues": 20,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1600,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "alpha/tied-one",
+      "description": "同分对照项目一，用来验证同分时的字典序稳定排序",
+      "language": "JavaScript",
+      "stars": 5000,
+      "forks": 300,
+      "openIssues": 20,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1500,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "zeta/no-lang-exe",
+      "description": "没有标注语言但有已核实安装包的工具",
+      "language": null,
+      "stars": 1500,
+      "forks": 120,
+      "openIssues": 12,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "releaseWindows",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1400,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "beta/tied-two",
+      "description": "同分对照项目二，与项目一同分但要排在后面",
+      "language": "TypeScript",
+      "stars": 5000,
+      "forks": 300,
+      "openIssues": 20,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1500,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "gamma/pdfsmith",
+      "description": "把 PDF、Word、Excel 变成 AI 能读的文字",
+      "language": "Python",
+      "stars": 20000,
+      "forks": 1200,
+      "openIssues": 10,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "releaseWindows",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 2500,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "gamma/paintstudio",
+      "description": "在浏览器里画流程图的小工具",
+      "language": "TypeScript",
+      "stars": 18000,
+      "forks": 900,
+      "openIssues": 30,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "releaseWindows",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 2200,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "delta/notesnap",
+      "description": "截图之后自动整理成笔记",
+      "language": "Python",
+      "stars": 15000,
+      "forks": 800,
+      "openIssues": 40,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "Apache-2.0",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "npmBinWin",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1800,
+      "confidence": "estimated"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "delta/markdownify",
+      "description": "把杂七杂八的文档转成 Markdown",
+      "language": "Python",
+      "stars": 12000,
+      "forks": 600,
+      "openIssues": 25,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1500,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "delta/tablewiz",
+      "description": "把表格数据画成好看的图",
+      "language": "JavaScript",
+      "stars": 11000,
+      "forks": 500,
+      "openIssues": 15,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1300,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "epsilon/shrinkvid",
+      "description": "把视频压到能发出去的大小",
+      "language": "C++",
+      "stars": 10000,
+      "forks": 400,
+      "openIssues": 50,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "GPL-3.0",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "releaseWindows",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1200,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "epsilon/tinytimer",
+      "description": "一个极简的番茄钟",
+      "language": "Rust",
+      "stars": 9000,
+      "forks": 380,
+      "openIssues": 22,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "buildFromSource",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1100,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "zeta/colorshift",
+      "description": "帮你把配色调顺眼的小工具",
+      "language": "TypeScript",
+      "stars": 8000,
+      "forks": 360,
+      "openIssues": 28,
+      "pushedAt": "2026-10-08T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "npmNoBin",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 1000,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "zeta/voicepad",
+      "description": "按住说话，自动变成文字",
+      "language": "Python",
+      "stars": 7000,
+      "forks": 340,
+      "openIssues": 12,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 900,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "zeta/filesort",
+      "description": "自动把下载文件夹收拾干净",
+      "language": "Go",
+      "stars": 20000,
+      "forks": 1500,
+      "openIssues": 60,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "Apache-2.0",
+      "archived": false,
+      "hasRelease90d": false
+    },
+    "runnability": {
+      "kind": "npmNoBin",
+      "verified": true,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 700,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": false
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "eta/jsonlens",
+      "description": "把一坨 JSON 看成树",
+      "language": "JavaScript",
+      "stars": 6000,
+      "forks": 260,
+      "openIssues": 18,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "npmNoBin",
+      "verified": true,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 600,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "eta/imgcrush",
+      "description": "批量把图片压小",
+      "language": "C++",
+      "stars": 5000,
+      "forks": 220,
+      "openIssues": 20,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "npmNoBin",
+      "verified": true,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 500,
+      "confidence": "reported"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "eta/csvpeek",
+      "description": "不用打开 Excel 就能看 CSV",
+      "language": "Python",
+      "stars": 4000,
+      "forks": 180,
+      "openIssues": 16,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "npmNoBin",
+      "verified": true,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 400,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "theta/pdfmerge",
+      "description": "把多个 PDF 合成一个",
+      "language": "Python",
+      "stars": 3000,
+      "forks": 150,
+      "openIssues": 14,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": false
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 300,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "theta/qrgen",
+      "description": "一行命令生成二维码",
+      "language": "Go",
+      "stars": 2000,
+      "forks": 120,
+      "openIssues": 10,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 200,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "theta/renamer",
+      "description": "按规则批量重命名文件",
+      "language": "Rust",
+      "stars": 1000,
+      "forks": 90,
+      "openIssues": 8,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "buildFromSource",
+      "verified": true,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 120,
+      "confidence": "estimated"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "iota/backupbuddy",
+      "description": "把重要文件定时备份到网盘",
+      "language": "Go",
+      "stars": 900,
+      "forks": 80,
+      "openIssues": 9,
+      "pushedAt": "2026-10-07T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "dockerOnly",
+      "verified": true,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 100,
+      "confidence": "estimated"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "iota/scriptbox",
+      "description": "把常用小脚本收进一个箱子",
+      "language": "Shell",
+      "stars": 800,
+      "forks": 70,
+      "openIssues": 7,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "dockerOnly",
+      "verified": true,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 90,
+      "confidence": "estimated"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "bad/archived",
+      "description": "已经归档停止维护的项目，只能进经典榜",
+      "language": "Python",
+      "stars": 60000,
+      "forks": 4000,
+      "openIssues": 5,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": true,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "releaseWindows",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 0,
+      "confidence": "measured"
+    },
+    "extra": {}
+  },
+  {
+    "repo": {
+      "ownerRepo": "bad/nolicense",
+      "description": "没有开源许可证的项目，只能进经典榜",
+      "language": "Python",
+      "stars": 50000,
+      "forks": 3000,
+      "openIssues": 5,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": null,
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "npmBinWin",
+      "verified": true,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 1500,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "bad/unverified",
+      "description": "安装方式还没核实过的项目，只能进经典榜",
+      "language": "JavaScript",
+      "stars": 40000,
+      "forks": 2500,
+      "openIssues": 5,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "npmBinWin",
+      "verified": false,
+      "hasChinese": false
+    },
+    "velocity": {
+      "gained7d": 1800,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "bad/stale",
+      "description": "超过 7 天没有更新，只能进经典榜",
+      "language": "Python",
+      "stars": 30000,
+      "forks": 2000,
+      "openIssues": 5,
+      "pushedAt": "2026-09-01T00:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "hasChinese": true
+    },
+    "velocity": {
+      "gained7d": 900,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "awesome/list-only",
+      "description": "纯资料清单，收罗各种好用的工具链接",
+      "language": "Markdown",
+      "stars": 25000,
+      "forks": 1800,
+      "openIssues": 5,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "CC0-1.0",
+      "archived": false,
+      "hasRelease90d": false
+    },
+    "runnability": {
+      "kind": "none",
+      "verified": false,
+      "hasChinese": false,
+      "notes": [
+        "这个项目只是一份资料清单，本身不提供可以安装运行的软件，所以我们没有给你任何命令。"
+      ]
+    },
+    "velocity": {
+      "gained7d": 0,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "cn/chinese-guide",
+      "description": "带完整中文说明的小工具，用来演示「🈶 有中文说明」这个徽章",
+      "language": "Python",
+      "stars": 4200,
+      "forks": 260,
+      "openIssues": 12,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "MIT",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "pypiCompatible",
+      "verified": true,
+      "hasChinese": true,
+      "localizedFiles": [
+        "README.zh-CN.md"
+      ]
+    },
+    "velocity": {
+      "gained7d": 2600,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  },
+  {
+    "repo": {
+      "ownerRepo": "jp/japanese-only",
+      "description": "只有日文说明的项目，用来演示「有本地化文档（非中文）」这个徽章",
+      "language": "Go",
+      "stars": 6800,
+      "forks": 420,
+      "openIssues": 18,
+      "pushedAt": "2026-10-09T12:00:00Z",
+      "license": "Apache-2.0",
+      "archived": false,
+      "hasRelease90d": true
+    },
+    "runnability": {
+      "kind": "npmBinWin",
+      "verified": true,
+      "hasChinese": false,
+      "localizedFiles": [
+        "README.ja.md"
+      ]
+    },
+    "velocity": {
+      "gained7d": 1400,
+      "confidence": "measured"
+    },
+    "extra": {
+      "growing": true
+    }
+  }
+]

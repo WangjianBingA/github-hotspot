@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>历史归档 · 有数据的每一天</title>
+<!--
+  历史归档页（spec §4.6：底部能回看历史上任意一天）。
+
+  为什么单独开一页：榜单页底部那个「看哪一天」只列日期，而且**只有两天以上数据时才出现**
+  （只有一天时它没有意义）；它也回答不了"一共几天""最新是哪天""一天都没有时该怎么办"。
+  这一页把数据清单摊开：0 天 / 1 天 / 多天 / 清单读不出来，四种情况都各说各的话，
+  说法全部由 render.mjs 的 historyView 决定（本页与 history.js 都不挑文案，R102）。
+
+  零依赖零构建：与首页、新手准备页共用同一份 style.css；不收集任何东西，也不探测访客的电脑。
+-->
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-head">
+  <h1>历史归档</h1>
+  <p class="tagline">这里列出有榜单数据的每一天。点哪一天，就看那一天的榜单。</p>
+</header>
+
+<main id="history">
+  <!-- 数据到位之前先说明"正在做什么"，而不是留一块空白让人以为网站坏了（与首页同一做法）。 -->
+  <p class="loading">正在读取往期数据……</p>
+  <!-- 这一页要靠浏览器读同目录下的数据文件才有内容：JS 被关掉时至少说清发生了什么。 -->
+  <noscript>
+    <p class="empty">这一页要允许浏览器运行 JavaScript 才能列出往期日期——它只是读同目录下的数据文件，
+      不会收集任何东西。也可以直接回<a href="index.html">榜单首页</a>。</p>
+  </noscript>
+</main>
+
+<footer class="site-foot">
+  <p class="foot-line"><a href="index.html">← 回到榜单</a> · <a href="about.html">关于评分口径</a> · <a href="prepare.html">新手准备页</a></p>
+  <p class="foot-line">数据来自 GitHub 的公开信息。这一页只列出真的有数据文件的日期——跑过采集才会有新的日期出现。</p>
+</footer>
+
+<script type="module" src="history.js"></script>
+</body>
+</html>

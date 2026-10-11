@@ -91,12 +91,12 @@
 
 ### 3.1 待验证的开放项（带决策规则）
 
-**开放项 O1**：新版端点 `GET /repos/{owner}/{repo}/stargazers/history`
-（需请求头 `X-GitHub-Api-Version: 2026-03-10`）据调研可按周分桶返回每日星标增量、未认证可用。
-- **验证方式**：额度恢复后实测（后台任务 `pwsh-129`），检查状态码与响应结构。
-- **成立（决策 A）**：作为涨星速度的**最高优先级**来源，可得精确 7 日/3 日增量。
-- **不成立（决策 B）**：走 §7.2 阶梯（新项目总收藏 → trending 报告值 → 历史 JSON 差值 → Events 外推）。
-- **两种决策下代码结构不变**：统一走 `sources/star-velocity.mjs`，内部逐级降级并输出 `confidence`。
+**开放项 O1 —— 已于 2026-10-10 实测结案（决策 A：端点可用）**：
+`GET /repos/{owner}/{repo}/stargazers/history?per_page=30` 返回 `[{ week: <unix秒>, total: <累计>, days: [7 个日增量] }]`，
+**未认证即可用**（实测 200），`X-GitHub-Api-Version: 2026-03-10` 请求头**非必需**（不带也 200），老仓库带 `Link rel="last"` 可翻页。
+证据校验：`days` 七天之和与 `total` 完全一致（13150 = 5004+5546+1897+703）→ 是精确日线而非估算。
+- **影响**：§7.2 的**级别 0 成为首选来源**，级别 1–4 降为兜底。
+- **成本**：新仓库 1 次请求；老仓库约每 30 周 1 次请求（HelloGitHub 这类 9 年老库用 `per_page=30` 约 9 次）。
 
 ---
 
@@ -248,7 +248,7 @@ github-hotspot/
           "confidence": "measured",           // measured | reported | estimated
           "velocityLevel": 1,
           "scores": { "hot": 38.2, "reputation": 24.1, "runnable": 25, "total": 87.3 },
-          "grade": "green", "chineseDoc": true,
+          "grade": "green", "hasChinese": true,
           "install": { "kind": "releaseWindows", "command": null,
                        "downloadUrl": "https://.../app-setup.exe",
                        "evidence": "release asset: app-setup.exe", "verified": true },
@@ -280,28 +280,61 @@ github-hotspot/
 | 轴 | 分值 | 子项 |
 |---|---|---|
 | **热度** | 45 | 7 日新增收藏，`log10` 归一化：`45 × min(1, log10(1+v) / log10(1+3000))` |
-| **口碑** | 30 | fork/star 比 6 + issue 处理率 8 + 近期提交活跃 6 + 近 90 天有发版 4 + 许可证齐全 3 + 收藏持续增长 3 |
-| **新手友好** | 25 | 安装路径 0-18 + 中文文档 0-7 |
+| **口碑** | 30 | fork/star 比 8 + 近期提交活跃 8 + 近 90 天有发版 6 + 许可证齐全 4 + 收藏持续增长 4 |
+| **新手友好** | 25 | 安装路径 0-18 + 中文说明 0-7（R143 起按"真有中文"算，见下面的修订说明） |
 
-**新手友好子项（v1 的"可落地分"更名，口径不变）**
+**口碑子项的确定性口径**（全部只用已获取字段，无需额外请求，可单测；五项之和 = 30 = `WEIGHTS.reputation`）
 
 | 子项 | 计算方式 | 满分条件 |
 |---|---|---|
-| fork/star 比 | `forks / stars` | ≥ 0.15 |
-| issue 处理率 | `closed_issues / (closed_issues + open_issues)` | ≥ 0.8 |
-| 近期提交活跃 | `pushed_at` 距今天数 | ≤ 2 天满分，≤ 7 天得 4 分 |
+| fork/star 比 | `forks / stars` | ≥ 0.15（线性：`8 × min(1, ratio / 0.15)`）|
+| 近期提交活跃 | `pushed_at` 距今天数 | ≤ 2 天满分；≤ 7 天得 `8 × 2 / 3` |
 | 近 90 天有发版 | 最新 release 时间 | 有发版满分 |
 | 许可证齐全 | `license.spdx_id` 存在且非 `NOASSERTION` | 存在满分 |
-| 收藏持续增长 | 历史 JSON 相邻两期差值 > 0 | 有增长满分（数据不足给中性分，不惩罚新项目） |
+| 收藏持续增长 | 历史 JSON 相邻两期差值 > 0 | 有增长满分（数据不足给**中性半分 2**，不惩罚新项目）|
 
-**安装路径分档**：release 有 Windows 资产 18 / npm `bin`+`win32` 16 / PyPI 有包 14 / npm 无 `bin` 8 / 需自行编译 6 / 仅 Docker 4。
+> **为什么没有"issue 处理率"（2026-10-10 修订）**：原设计含 `closed_issues / (closed_issues + open_issues)`，占 8 分。控制者用真实 API 实测确认 **`closed_issues` 字段在仓库详情与 search 结果里都不存在**（含 issue 的字段只有 `issue_events_url` / `issue_comment_url` / `issues_url` / `has_issues` / `open_issues_count` / `open_issues`）。该子项在真实数据下恒为 0，会让界面对**每一个**项目显示"作者管不管事 = 0 分"（一句假话），并把口碑轴满分压到 22、破坏 45/30/25 的平衡。故移除，8 分重新分配给**可测量**的信号。
+>
+> **留作可改进空间**：若要恢复"作者管不管事"，可行的正确做法是每候选追加一次 `GET /search/issues?q=repo:{owner}/{repo}+type:issue+state:closed&per_page=1` 读 `total_count`——但它走 **search 额度（10 次/分钟）**，需为全部过门槛候选付费并有节奏地限速。当前判断：收益不抵成本，故不做。
 
-**中文文档分**：README 中日韩字符占比 ≥ 3% → 4 分；另存在 `README.zh-CN.md` / `README_CN.md` / `docs/*.zh*` → 再 +3。
-（实测校准：HelloGitHub 5.35% 命中；markitdown 0% 正确排除；opencode 0.26% 但靠 `README.ja.md` 正确识别为有本地化文档。）
+**新手友好子项**（v1 的"可落地分"更名，口径不变；安装路径 0-18 + 中文说明 0-7 = 25 = `WEIGHTS.runnable`）
+
+**安装路径分档（0-18）**：release 有 Windows 资产 18 / npm `bin`+`win32` 16 / PyPI 有包 14 / npm 无 `bin` 8 / 需自行编译 6 / 仅 Docker 4。
+
+**中文说明分（0-7，R143 修订）**：**要么 7 分、要么 0 分**。判据是 `hasChinese`：
+README 里**汉字**占比 ≥ 3%（且假名占比低于阈值），或存在**中文**文件名的本地化文件
+（`README.zh-CN.md` / `README_CN.md` / `README.zh.md` / `docs/*.zh*`），满足任一即给满 7 分；
+**非中文的本地化说明不给这一项的分**（只有 `README.ja.md` 这类文档时，这一项是 0 分）。
+代码里的构成是"正文 4 分 + 本地化文件 3 分"（`CHINESE_POINTS`），但两者是同一件事的两种证据，
+所以对外只有 7 或 0 两档，不存在按比例加分。
+
+> **R143（2026-10-11）：这一项从 `hasCjk` 改成 `hasChinese` 计分。**
+> 旧口径是"README 中日韩字符占比 ≥3% → 4 分；另存在任意本地化文件 → 再 +3"，
+> 即**有意奖励"任何本地化"**（R59 原文）。它带来两个问题：
+> ① 只有 `README.ja.md` 的项目会拿到"中文说明"这 7 分，而这条轴、口径页、README、手册都把它叫「中文说明」；
+> ② `reasons.mjs` 用 `chineseDoc`(=`hasCjk`) 推出"有中文说明"，与同一条目的抽屉 FAQ（读 `hasChinese`）
+> 直接矛盾——已提交的演示数据里 174 个渲染位有 129 个同时命中。
+> 现在：计分、徽章、文案**统一**按 `hasChinese`；`hasCjk` 只用于如实说「有本地化文档（非中文）」。
+> 字段层面见 R153（删掉与 `hasChinese` 恒等的历史名 `chineseDoc`）。
+
+**（实测校准）**：HelloGitHub 汉字占比 5.35% 命中；markitdown 0% 正确排除；
+`sst/opencode` 正文 CJK 占比 0.26%（低于阈值）但仓库有 `README.ja.md` —— R143 之后它是
+`hasChinese: false`（**不给这 7 分、不给中文徽章**）、`hasCjk: true`（"有本地化文档"这条事实成立，
+界面照实说"有本地化文档（非中文）"）。
+
+> **R59（2026-10-10 补充）："有中文"与"有本地化"是两个不同的断言，徽章不得混用。**
+> 界面上的徽章写的是「🈶 有中文说明」。若一个项目只有 `README.ja.md`（日文），却对中文新手宣称"有中文说明"，
+> 那就是一句**假话**，正是本项目反复修正的那类缺陷。因此检测必须同时产出两个布尔值：
+> - `hasChinese` —— **计分与徽章共用**（R143 起）：确实有中文。判定为 `README.zh-CN.md` / `README_CN.md` /
+>   `README.zh.md` / `docs/*.zh*` 之一存在，**或** Han 字符占比达标且**假名（U+3040–U+30FF）占比低于一个小阈值**
+>   （日文会混用假名与汉字，故假名占比偏高即判为日文）。
+> - `hasCjk` —— **只用于如实说明**（R143 起不参与计分）：CJK 占比达标，或存在任意本地化文件。
+> 徽章与计分都用 `hasChinese`；仅有非中文本地化时，界面必须**如实**表述（例如「有本地化文档（非中文）」），
+> 不得显示"有中文说明"，也不给这一项的分。
 
 ### 6.2 硬性门槛
 
-进入"本周飙升"与"新手能玩"必须同时满足：未归档 · 有 LICENSE · 近 7 天有提交 · 总收藏 ≥ 200 · **至少一条已核实的安装路径** · 非纯资源清单类（`awesome-*` 只进经典榜）。
+进入"本周飙升"与"新手能玩"必须同时满足：未归档 · 有 LICENSE · 近 7 天有提交 · 总收藏 ≥ 200 · **至少一条已核实的安装路径**（判定式：`verified === true` 且 `RUNNABLE_POINTS[kind] > 0`，故 `'none'` 与未知 kind 一律挡下，而 `dockerOnly`(4) 放行）· 非纯资源清单类（见 §6.4，只进经典榜）。
 
 ### 6.3 "为什么上榜"的可解释输出
 
@@ -309,6 +342,15 @@ github-hotspot/
 > 本周新增 1,234 人收藏（实测）· 作者近 7 天仍在更新 · 有 Windows 安装包 · 有中文说明
 
 刻意不引入大模型：评分可复现、可单测、可追溯。
+
+### 6.4 纯资源清单类的识别
+
+对应 §6.2 的门槛 6，判定规则（确定性、可单测）：
+
+> **`(language 为空或为 'Markdown') 且 无已核实的安装路径`** → 判为资料清单类，排除出「本周飙升」与「新手能玩」，只进「经典必玩」。理由文案：「这是资料清单，不是能装的软件」。
+
+- **刻意不用仓库名启发式**（例如 `awesome-*`）：名字匹配会静默误伤 `owner/awesome-tool` 这类真实工具，且不是本规范的口径。
+- 该规则与门槛 5 存在重叠，这是**有意的纵深防御**：清单类仓库由此获得更准确的中文理由，而不是笼统的"没有安装方式"。
 
 ---
 
@@ -322,13 +364,15 @@ GitHub 不提供 star 历史；`/stargazers` 列表端点自 2026-06-30 起对�
 
 | 级别 | 方法 | confidence | 成本 | 适用 |
 |---|---|---|---|---|
-| 0 | `stargazers/history` 端点（**待验证 O1**） | `measured` | 新仓库 1 次 | 若可用则优先 |
+| 0 | `stargazers/history` 端点（**O1 已验证可用**） | `measured` | 新仓库 1 次；老仓库每 30 周 1 次 | **首选来源** |
 | 1 | 新项目：总收藏数即 7 日增量（`created ≤ 7d`） | `measured` | 0（发现候选时已有） | 7 天内新建项目 |
 | 2 | trending HTML 的 `starsThisWeek` | `reported` | **0 API 成本** | 恰在 trending 页上的项目 |
-| 3 | **历史 JSON 差值**（`public/data/history/*.json`） | `measured` | 0 | 连续追踪的项目，第 3 天起 |
+| 3 | **当天快照与 7 天前那一天快照的差值**（`public/data/YYYY-MM-DD.json`，读的是 7 天前那一天的当天文件） | `measured` | 0 | 连续追踪的项目，从第 8 天起 |
 | 4 | `/repos/{r}/events` 的 WatchEvent 速率外推 | `estimated` | 1 次 | 兜底 |
 
-**v2 变化**：级别 3 从"SQLite 快照差值"改为"读仓库里的历史 JSON 差值"。因为历史 JSON 会随采集提交进仓库，**在 GitHub Actions 的全新容器里也能读到**，这让它成为最稳的支柱，也让"越用越准"的故事公开可验证。
+**v2 变化**：级别 3 从"SQLite 快照差值"改为"读仓库里已经落盘的那些当天 JSON 的差值"——**读的是 7 天前那一天的那份当天文件**（`public/data/YYYY-MM-DD.json`，间隔正好 7 天）。因为数据文件会随采集提交进仓库，**在 GitHub Actions 的全新容器里也能读到**，这让它成为最稳的支柱，也让"越用越准"的故事公开可验证。
+
+**R132 更正（2026-10-11）**：本表原先写的是"历史 JSON 差值（`public/data/history/*.json`）"，那是**错的**。`history/YYYY-MM.json` 这个按月归档的文件只在采集时被 `appendHistory` 写入，**读它的 `readHistory` 没有任何生产调用者**（只有测试在用）——所以它不是级别 3 的来源，级别 3 读的是 7 天前那一天的那份当天文件。
 
 ### 7.3 界面必须诚实
 
@@ -433,7 +477,7 @@ GitHub 不提供 star 历史；`/stargazers` 列表端点自 2026-06-30 起对�
 
 | 编号 | 问题 | 处理 |
 |---|---|---|
-| O1 | `stargazers/history` 端点是否真的未认证可用 | 后台任务 `pwsh-129` 实测中；结果只影响 §7.2 走级别 0 还是从级别 1 起步，代码结构不变 |
+| O1 | `stargazers/history` 端点是否真的未认证可用 | ✅ **已结案（2026-10-10 实测）**：未认证可用、版本头非必需、可翻页。级别 0 成为首选来源（详见 §3.1） |
 | O2 | 经典榜的分组标签是否需人工维护 | 先用 topics 自动归类，不足再手工补充 |
 | O3 | 何时真正发布上线 | 用户决定"先做出来再说"；M6 后可直接部署 |
 | O4 | 是否启用 Actions 定时采集 | `daily.yml` 已预留，用户决定 |

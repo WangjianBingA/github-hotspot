@@ -206,7 +206,7 @@ git commit -m "feat(store): JSON 数据层（文件即数据库）"
 **Interfaces:**
 - Consumes: 无
 - Produces:
-  - `src/config/weights.mjs` 导出 `WEIGHTS={hot:45,reputation:30,runnable:25}`、`HOT_REFERENCE_STARS_PER_WEEK=3000`、`BOARD_SIZES={weekly:15,newbie:15,classic:30}`、`DETAIL_WEIGHTS={forkRatio:6,issueClosure:8,pushRecency:6,release90d:4,license:3,growth:3}`、`RUNNABLE_POINTS={releaseWindows:18,npmBinWin:16,pypiCompatible:14,npmNoBin:8,buildFromSource:6,dockerOnly:4,none:0}`、`CHINESE_POINTS={readmeRatio:4,localizedFile:3}`、`CHINESE_RATIO_THRESHOLD=0.03`
+  - `src/config/weights.mjs` 导出 `WEIGHTS={hot:45,reputation:30,runnable:25}`、`HOT_REFERENCE_STARS_PER_WEEK=3000`、`BOARD_SIZES={weekly:15,newbie:15,classic:30}`、`DETAIL_WEIGHTS={forkRatio:8,pushRecency:8,release90d:6,license:4,growth:4}`（2026-10-10 起；五项之和必须 = 30 = `WEIGHTS.reputation`）、`RUNNABLE_POINTS={releaseWindows:18,npmBinWin:16,pypiCompatible:14,npmNoBin:8,buildFromSource:6,dockerOnly:4,none:0}`、`CHINESE_POINTS={readmeRatio:4,localizedFile:3}`、`CHINESE_RATIO_THRESHOLD=0.03`
   - `scoreHot({ starsGained7d }): number` —— 返回 0–45
 
 - [ ] **Step 1: 写失败测试** `test/score-hot.test.mjs`
@@ -278,7 +278,10 @@ git commit -m "feat(score): 热度分与 log 归一化边界"
   - `calculateGrade(installPathScore): 'green' | 'yellow' | 'red'`
   - `passesGates(repo, runnability): { ok: boolean, reasons: string[] }`
   - `repo` 形状：`{ ownerRepo, stars, forks, openIssues, closedIssues, pushedAt, license, archived, language, hasRelease90d }`
-  - `runnability` 形状：`{ kind, verified, chineseDoc }`，`kind` 取自 `RUNNABLE_POINTS` 的键
+  - `runnability` 形状：`{ kind, verified, hasChinese }`，`kind` 取自 `RUNNABLE_POINTS` 的键
+    （**R143 / R153 修订**：`chineseDoc` 这个历史字段名**已删除**；判据、徽章与文案统一为 `hasChinese`
+    ——"真有中文文档"。`hasCjk`（含日韩的"有本地化文档"）只用于如实说明「有本地化文档（非中文）」，
+    不参与计分。本文件中凡是出现 `chineseDoc` 的历史片段都按 `hasChinese` 读。）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -287,6 +290,7 @@ git commit -m "feat(score): 热度分与 log 归一化边界"
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { scoreReputation, passesGates } from '../src/score/score.mjs';
+import { DETAIL_WEIGHTS, WEIGHTS } from '../src/config/weights.mjs';
 
 const base = { ownerRepo:'a/b', stars:1000, forks:150, openIssues:20, closedIssues:80,
   pushedAt: new Date().toISOString(), license:'MIT', archived:false, language:'Go', hasRelease90d:true };
@@ -295,14 +299,14 @@ test('各子项满分时口碑分等于 30', () => {
   assert.equal(scoreReputation(base, { growing: true }).total, 30);
 });
 
-test('issue 处理率按 closed/(closed+open) 计算', () => {
-  const r = scoreReputation({ ...base, openIssues: 80, closedIssues: 20 }, { growing: false });
-  assert.equal(r.parts.issueClosure, 2);   // 0.2 / 0.8 * 8
+test('口碑五项之和恰为 30，防止日后改单项却忘了总和', () => {
+  assert.equal(Object.values(DETAIL_WEIGHTS).reduce((a, b) => a + b, 0), WEIGHTS.reputation);
+  assert.equal(WEIGHTS.reputation, 30);
 });
 
 test('新项目没有历史增长数据时不惩罚，给中性分', () => {
   const r = scoreReputation(base, { growing: null });
-  assert.equal(r.parts.growth, 1.5);       // 3 分的一半
+  assert.equal(r.parts.growth, 2);         // 4 分的一半
 });
 
 test('archived 仓库被门槛挡下并给出原因', () => {
@@ -330,21 +334,21 @@ import assert from 'node:assert/strict';
 import { scoreRunnable, calculateGrade } from '../src/score/score.mjs';
 
 test('Windows 安装包得 18 分，加中文文档共 25', () => {
-  const r = scoreRunnable({ kind:'releaseWindows', chineseDoc:true });
+  const r = scoreRunnable({ kind:'releaseWindows', hasChinese:true });
   assert.equal(r.parts.installPath, 18);
   assert.equal(r.total, 25);
 });
 
 test('无中文文档时不给中文分', () => {
-  assert.equal(scoreRunnable({ kind:'releaseWindows', chineseDoc:false }).parts.chinese, 0);
+  assert.equal(scoreRunnable({ kind:'releaseWindows', hasChinese:false }).parts.chinese, 0);
 });
 
 test('中文分封顶 7 分', () => {
-  assert.equal(scoreRunnable({ kind:'pypiCompatible', chineseDoc:true }).parts.chinese, 7);
+  assert.equal(scoreRunnable({ kind:'pypiCompatible', hasChinese:true }).parts.chinese, 7);
 });
 
 test('未知 kind 得 0 分而不是 NaN', () => {
-  assert.equal(scoreRunnable({ kind:'奇怪的kind', chineseDoc:false }).parts.installPath, 0);
+  assert.equal(scoreRunnable({ kind:'奇怪的kind', hasChinese:false }).parts.installPath, 0);
 });
 
 test('难度分级：18/16 绿，14/8 黄，6/4/0 红', () => {
@@ -364,7 +368,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`scoreReputation` 按 spec §6.1 表逐项算并返回 `parts`；`extra.growing` 为 `null`/`undefined` 时 `growth` 给 `DETAIL_WEIGHTS.growth / 2`。`scoreRunnable` 用 `RUNNABLE_POINTS[kind] ?? 0`，中文分在 `chineseDoc === true` 时给 `CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile`。`scoreRepo` 汇总并算 `total`、`grade = calculateGrade(parts.installPath)`、透传 `confidence`。`passesGates(repo, runnability, now = new Date())` 检查 spec §6.2 六条门槛，返回**全部**未通过的中文原因（"已停止维护" / "没有开源许可证" / "超过 7 天没有更新" / "收藏人数不足 200" / "没有已核实的安装方式" / "这是资料清单，不是能装的软件"）。
+`scoreReputation` 按 spec §6.1 表逐项算并返回 `parts`；`extra.growing` 为 `null`/`undefined` 时 `growth` 给 `DETAIL_WEIGHTS.growth / 2`。`scoreRunnable` 用 `RUNNABLE_POINTS[kind] ?? 0`，中文分在 `hasChinese === true` 时给 `CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile`。`scoreRepo` 汇总并算 `total`、`grade = calculateGrade(parts.installPath)`、透传 `confidence`。`passesGates(repo, runnability, now = new Date())` 检查 spec §6.2 六条门槛，返回**全部**未通过的中文原因（"已停止维护" / "没有开源许可证" / "超过 7 天没有更新" / "收藏人数不足 200" / "没有已核实的安装方式" / "这是资料清单，不是能装的软件"）。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -405,7 +409,7 @@ test('理由里必须出现安装方式与中文信息', () => {
     score: { parts: { installPath: 18, chinese: 7 } },
     repo: { pushedAt: new Date().toISOString() },
     velocity: { gained7d: 500, confidence: 'measured' },
-    runnability: { kind: 'releaseWindows', chineseDoc: true }
+    runnability: { kind: 'releaseWindows', hasChinese: true }
   });
   assert.ok(rs.some(r => r.includes('Windows')));
   assert.ok(rs.some(r => r.includes('中文')));
@@ -415,7 +419,7 @@ test('理由中不得出现行话或字段名', () => {
   const rs = buildReasons({ score:{ parts:{ installPath:18, chinese:0 } },
     repo:{ pushedAt: new Date().toISOString() },
     velocity:{ gained7d:10, confidence:'measured' },
-    runnability:{ kind:'releaseWindows', chineseDoc:false } });
+    runnability:{ kind:'releaseWindows', hasChinese:false } });
   assert.ok(rs.every(r => !/\b(star|fork|issue)s?\b/i.test(r)));
   assert.ok(rs.every(r => !/[a-z]+_[a-z]+/.test(r)));
 });
@@ -428,7 +432,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`formatVelocityText` 三种 confidence 三种文案，千分位用 `toLocaleString('zh-CN')`。`buildReasons` 从 `runnability.kind`、`chineseDoc`、`pushedAt` 距今天数、`velocity` 生成 3–5 条中文短句，全部走 spec §4.3 翻译表。
+`formatVelocityText` 三种 confidence 三种文案，千分位用 `toLocaleString('zh-CN')`。`buildReasons` 从 `runnability.kind`、`hasChinese`、`pushedAt` 距今天数、`velocity` 生成 3–5 条中文短句，全部走 spec §4.3 翻译表。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -451,7 +455,7 @@ git commit -m "feat(score): 中文上榜理由与置信度文案"
 - Consumes: `scoreRepo`、`passesGates`、`BOARD_SIZES`
 - Produces:
   - `src/config/boards.mjs` 导出 `BOARDS = [{ id:'weekly', title:'本周飙升', size:15, sortBy:'total' }, { id:'newbie', title:'新手能玩', size:15, sortBy:'runnable' }, { id:'classic', title:'经典必玩', size:30, sortBy:'stars' }]`
-  - `buildBoard(boardId, items, now?): RankedItem[]`，`items` 为 `{ repo, runnability, velocity, extra }[]`，`RankedItem = { rank, repo, runnability, velocity, score, grade, chineseDoc, reasons }`
+  - `buildBoard(boardId, items, now?): RankedItem[]`，`items` 为 `{ repo, runnability, velocity, extra }[]`，`RankedItem = { rank, repo, runnability, velocity, score, grade, hasChinese, reasons }`
 
 - [ ] **Step 1: 写失败测试** `test/boards.test.mjs`
 
@@ -513,7 +517,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`build` 对每个候选调用 `scoreRepo` 与 `passesGates`；`weekly`/`newbie` 只保留通过门槛者（`newbie` 额外排除 `language` 为空或 `kind === 'none'`）；`classic` 只按 `repo.stars` 排序；排序稳定（同分按 `ownerRepo` 字典序）；附加 `rank` 并从 1 开始；截断到 `BOARD_SIZES[boardId]`；同时带上 `reasons`（调用 `buildReasons`）与 `grade`、`chineseDoc`。
+`build` 对每个候选调用 `scoreRepo` 与 `passesGates`；`weekly`/`newbie` 只保留通过门槛者（`newbie` 额外排除 `language` 为空或 `kind === 'none'`）；`classic` 只按 `repo.stars` 排序；排序稳定（同分按 `ownerRepo` 字典序）；附加 `rank` 并从 1 开始；截断到 `BOARD_SIZES[boardId]`；同时带上 `reasons`（调用 `buildReasons`）与 `grade`、`hasChinese`。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -790,8 +794,8 @@ git commit -m "feat(sources): 新项目/活跃老项目/总榜三个发现器"
 **Interfaces:**
 - Consumes: `client.getJson(url, { api: 'none' })`
 - Produces:
-  - `lookupNpm(client, packageName, repoFullName): Promise<NpmInfo|null>`，`NpmInfo = { packageName, version, hasBin, osIncludesWin, repoMatches }`
-  - `lookupPyPI(client, packageName): Promise<PyPIInfo|null>`，`PyPIInfo = { packageName, version, requiresPython }`
+  - `lookupNpm(client, packageName, repoFullName): Promise<NpmInfo|null>`，`NpmInfo = { packageName, version, hasBin, osIncludesWin, repoMatches, evidence }`（`evidence` 由 R42 增加：`'repository' | 'bugs.url' | 'homepage' | 'none'`）
+  - `lookupPyPI(client, packageName, repoFullName): Promise<PyPIInfo|null>`，`PyPIInfo = { packageName, version, requiresPython, repoMatches, evidence }`（**Task 10B / R68**：第三个参数与 `repoMatches`/`evidence` 为后补；归属只取自 PyPI 自己声明的 `info.project_urls`（键名排序后遍历）> `info.home_page`，经 `normalizeRepoUrl` 归一化后与目标 `owner/repo` **严格相等**，**包名绝不参与判定**。此前 PyPI 侧没有归属字段，会在只知道包名时就发出 `pip install`——即 npm 侧花大力气防住的"信包名"错误换了个生态。）
   - `normalizeRepoUrl(url): string`
   - `isPythonCompatible(requiresPython, localPython): boolean`
 
@@ -843,7 +847,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`lookupNpm` 请求 `https://registry.npmjs.org/<name>`，取 `dist-tags.latest` 对应版本读 `bin`/`os`/`repository`，`repoMatches` 由 `normalizeRepoUrl` 比较得出。`lookupPyPI` 请求 `https://pypi.org/pypi/<name>/json`。`isPythonCompatible` 解析 `>=`/`<=`/`<`/`>`/`==` 与逗号多条件，只比较 major.minor。全部走 `api:'none'`。
+`lookupNpm` 请求 `https://registry.npmjs.org/<name>`，取 `dist-tags.latest` 对应版本读 `bin`/`os`/`repository`，`repoMatches` 由 `normalizeRepoUrl` 比较得出（**R42**：归属证据扩为 版本级 repository → 包级 repository → 版本级 `bugs.url` → 版本级 homepage → 包级 homepage，归一化后仍须严格相等；并输出 `evidence` 字段；**包名任何情况下不参与判定**）。`lookupPyPI` 请求 `https://pypi.org/pypi/<name>/json`。`isPythonCompatible` 解析 `>=`/`<=`/`<`/`>`/`==`/`!=` 与逗号多条件；**R47（推翻原先"只比 major.minor"）**：约束写了 patch 段就按 (major,minor,patch) 比较，`==X.Y.*` 保持 major.minor，本地版本缺 patch 按 `(major,minor,0)`，读不懂一律判不兼容（失败关闭）。全部走 `api:'none'`。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -861,10 +865,19 @@ git commit -m "feat(sources): npm/PyPI 直查与包名归属校验"
 
 **Files:**
 - Create: `src/sources/releases.mjs`, `test/releases.test.mjs`
+- Modify（仅 R40 所必需）: `src/score/score.mjs`、`test/score-reputation.test.mjs`
 
 **Interfaces:**
 - Consumes: `client.getJson(url, { api: 'core' })`
-- Produces: `pickWindowsAsset(assets): { name, url, size } | null`；`fetchLatestRelease(client, ownerRepo): Promise<{ tagName, publishedAt, windowsAsset } | null>`
+- Produces: `pickWindowsAsset(assets): { name, url, size } | null`；`fetchLatestRelease(client, ownerRepo): Promise<Release | null>`；`hasRecentRelease(release, now, days = 90): boolean | null`
+  - `Release = { kind: 'release', tagName, publishedAt, assets, windowsAsset } | { kind: 'no-release' }`
+  - **R40（控制者插入，必做）**：`release90d` 是口碑分里 6 分的一项，但在本任务之前**没有任何生产端**给它提供数据（全仓库只有读取处，没有写入处），导致口碑轴在生产环境实际只能拿 24/30。本任务必须补上生产者，且必须是**三态**，不得把"没问到"当成"确认没有"：
+    - 用 `GET /repos/{ownerRepo}/releases?per_page=1`（**列表**端点）而不是 `/releases/latest`：列表端点在没有发布时返回 `200 []`，而 `latest` 返回 404，二者与"请求失败"在客户端都以 `null` 出现，无法区分。
+    - `200 []` → `{ kind: 'no-release' }`（**确认**没有任何发布）
+    - `200 [r]` → `{ kind: 'release', tagName, publishedAt, assets, windowsAsset }`
+    - `null`（请求失败/额度耗尽）→ `null`（**未知**）
+    - `hasRecentRelease(...)` 返回 `true`（release 且 publishedAt 在 days 天内）/ `false`（`no-release`，或 release 但超出窗口）/ `null`（未知）
+  - 同时**窄范围**修改 `src/score/score.mjs`：`hasRelease90d === null`（未知）时必须给**中性半分**（`DETAIL_WEIGHTS.release90d / 2` = 3），与 `growth` 的既有口径一致；`false` 才给 0。理由：把"没问到"记 0 会让界面显示"近 90 天有发版：0 分"——一句我们并无证据的话，正是本项目刚修掉两次的同类缺陷。此改动只许涉及 `release90d` 一项，别的不许动。
 
 - [ ] **Step 1: 写失败测试** `test/releases.test.mjs`
 
@@ -894,6 +907,28 @@ test('空数组与非法输入返回 null', () => {
   assert.equal(pickWindowsAsset([]), null);
   assert.equal(pickWindowsAsset(null), null);
 });
+
+test('三态：确认没有发布 / 有发布但超窗 / 未知，三者必须互不混淆（R40）', () => {
+  const now = new Date('2026-10-10T00:00:00Z');
+  assert.equal(hasRecentRelease({ kind: 'no-release' }, now), false);
+  assert.equal(hasRecentRelease({ kind: 'release', publishedAt: '2026-09-01T00:00:00Z' }, now), true);
+  assert.equal(hasRecentRelease({ kind: 'release', publishedAt: '2026-01-01T00:00:00Z' }, now), false);
+  assert.equal(hasRecentRelease(null, now), null);          // 没问到 ≠ 没有
+});
+
+test('列表端点返回空数组时判为"确认没有发布"，请求失败时判为"未知"', async () => {
+  const ok = { getJson: async () => [] };
+  assert.deepEqual(await fetchLatestRelease(ok, 'a/b'), { kind: 'no-release' });
+  const fail = { getJson: async () => null };
+  assert.equal(await fetchLatestRelease(fail, 'a/b'), null);
+});
+
+test('未知的发版信息按中性半分计，不当作"确认没有"（R40）', () => {
+  const unknown = scoreReputation({ ...base, hasRelease90d: null }, { growing: true });
+  assert.equal(unknown.parts.release90d, DETAIL_WEIGHTS.release90d / 2);
+  const none = scoreReputation({ ...base, hasRelease90d: false }, { growing: true });
+  assert.equal(none.parts.release90d, 0);
+});
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -903,7 +938,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-优先级：`.exe` > `.msi` > 含 `windows|win64|win32` 的压缩包；显式排除含 `darwin|macos|linux|android|ios` 的名字。`fetchLatestRelease` 请求 `/repos/{ownerRepo}/releases/latest`，404 返回 `null`。
+优先级：`.exe` > `.msi` > 含 `windows|win64|win32` 的压缩包；显式排除含 `darwin|macos|linux|android|ios` 的名字。`fetchLatestRelease` 按 R40 请求 **`/repos/{ownerRepo}/releases?per_page=1`**（列表端点），`200 []` → `{ kind: 'no-release' }`，`200 [r]` → `{ kind: 'release', … }`，`null` → `null`。`hasRecentRelease` 实现三态判定。另按 R40 在 `src/score/score.mjs` 的 `scoreReputation` 里把 `hasRelease90d === null` 记为中性半分（`DETAIL_WEIGHTS.release90d / 2`），并在 `test/score-reputation.test.mjs` 里补一条对应断言。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -1077,7 +1112,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-CJK 集合 `[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]`，`ratio = 命中数 / 文本长度`，阈值取 `CHINESE_RATIO_THRESHOLD`。本地化文件名匹配 `/(^|\/)(README|readme)[._-]?(zh|cn)([._-](CN|TW|HK))?\.(md|markdown)$/`。`fetchChineseEvidence` 请求 `https://raw.githubusercontent.com/{ownerRepo}/{defaultBranch}/README.md` 及最多 3 个候选本地化文件名。`buildReputationInput` 映射为 `scoreReputation` 所需形状。
+CJK 集合 `[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]`，`ratio = 命中数 / 文本长度`，阈值取 `CHINESE_RATIO_THRESHOLD`。本地化文件名匹配 `/(^|\/)(README|readme)[._-]?(zh|cn)([._-](CN|TW|HK))?\.(md|markdown)$/`。`fetchChineseEvidence` 请求 `https://raw.githubusercontent.com/{ownerRepo}/{defaultBranch}/README.md` 及**最多 4 个**候选本地化文件名（实测实现探测 `README.zh-CN.md` / `README_CN.md` / `README.zh.md` / `README.ja.md`，共 ≤5 次 `api:'none'` 请求，不消耗 GitHub 额度）。**R59（后续补充）**：检测须同时产出 `hasCjk`（喂计分：CJK 占比达标或存在任意本地化文件）与 `hasChinese`（只管徽章：中文文件名存在，或汉字占比达标且假名占比 < 0.01），两者刻意不同——只有日文文档时不得对中文用户宣称"有中文说明"。**R63（后续修正）**：`docs/*.zh*` 的中文判定必须拿**完整路径**去匹配（该正则含字面量 `docs/`），拿剥掉目录前缀的文件名去匹配会变成死代码。`buildReputationInput` 映射为 `scoreReputation` 所需形状。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -1099,7 +1134,7 @@ git commit -m "feat(enrich): 中文文档检测与口碑输入"
 **Interfaces:**
 - Consumes: `lookupNpm`/`lookupPyPI`（Task 10）、`pickWindowsAsset`（Task 11）、`detectChinese`（Task 13）、`calculateGrade`（Task 4）
 - Produces:
-  - `classifyRunnability({ releases, npm, pypi, chinese }): Runnability`，`Runnability = { kind, command, downloadUrl, evidence, verified, difficulty, chineseDoc, notes }`
+  - `classifyRunnability({ releases, npm, pypi, chinese }): Runnability`，`Runnability = { kind, command, downloadUrl, evidence, verified, difficulty, hasChinese, notes }`
   - `buildInstallGuide(runnability): { steps: { title, body, command? }[], faq: { q, a }[] }`
 
 - [ ] **Step 1: 写失败测试** `test/runnability.test.mjs`
@@ -1146,7 +1181,7 @@ test('npm 无 bin 时降级为 npmNoBin（黄色）', () => {
 
 test('PyPI 包给出 pip 命令；版本要求写进说明', () => {
   const r = classifyRunnability({ releases:null, npm:null,
-    pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10' },
+    pypi:{ packageName:'markitdown', version:'0.1.8', requiresPython:'>=3.10', repoMatches:true },
     chinese:{ hasChinese:false, localizedFiles:[] } });
   assert.equal(r.kind, 'pypiCompatible');
   assert.match(r.command, /^pip install /);
@@ -1172,7 +1207,7 @@ test('安装向导固定 3 步，步骤含命令与常见问题', () => {
 
 test('Windows 安装包的第 2 步给下载链接而不是命令', () => {
   const g = buildInstallGuide({ kind:'releaseWindows', verified:true, difficulty:'green',
-    downloadUrl:'https://x/a.exe', command:null, chineseDoc:false, notes:[] });
+    downloadUrl:'https://x/a.exe', command:null, hasChinese:false, notes:[] });
   assert.match(g.steps[1].body + (g.steps[1].downloadUrl || ''), /https:\/\/x\/a\.exe/);
 });
 ```
@@ -1184,7 +1219,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-按优先级判定 `releaseWindows > npmBinWin > pypiCompatible > npmNoBin > buildFromSource > dockerOnly > none`；**任何 `repoMatches !== true` 的 npm 结果一律忽略**；`difficulty = calculateGrade(RUNNABLE_POINTS[kind])`。`buildInstallGuide` 生成固定三步（第 1 步"你需要先准备什么"按 kind 给结论；第 2 步按 kind 给命令或下载链接；第 3 步"怎么用"）与按 kind 的 FAQ（≥3 条，含"装错了怎么卸载"）。
+按优先级判定 `releaseWindows > npmBinWin > pypiCompatible > npmNoBin > buildFromSource > dockerOnly > none`；**任何 `repoMatches !== true` 的 npm 结果一律忽略**（**R68**：PyPI 也同理 —— `pypiOwned = pypi.repoMatches === true`，缺失/`undefined`/`false` 时不下发 `pip install`、该档不成立并写 note；`lookupPyPI` 的 `repoMatches`/`evidence` 由 Task 10B 补齐）；`difficulty = calculateGrade(RUNNABLE_POINTS[kind])`。**R51**：`windowsAsset.url` 为空/缺失不算可用安装路径，必须落到下一档。**R48**：不得调用 `isPythonCompatible` 伪造兼容结论，只带 `requiresPython` 原文。**R64**：`chineseDoc = hasCjk`（喂计分），`hasChinese` 只管徽章；仅有非中文本地化时如实说「有本地化文档（非中文）」。（**R143 修订**：计分也改为按"真有中文"的 `hasChinese`，`hasCjk` 只用于那句如实说明；**R153** 把与 `hasChinese` 恒等的 `chineseDoc` 删掉了。）**R65/R66/R67**：`buildFromSource`/`docker` 为调用方提供的证据旗标（没证据不猜）；npm 有 `bin` 但不支持 Windows 时不下发命令也不降级为 `npmNoBin`（落到 `none`，与 R45 一致）；这两档 `verified` 记 `true`。**R70/R71**：当证据缺失时，文案的主语必须是"我们没查到"，**不得**宣称项目级事实（如"这个项目没有安装方式"/"只有英文说明"）。`buildInstallGuide` 生成固定三步（第 1 步"你需要先准备什么"按 kind 给结论；第 2 步按 kind 给命令或下载链接；第 3 步"怎么用"）与按 kind 的 FAQ（≥3 条，含"装错了怎么卸载"）。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -1206,6 +1241,11 @@ git commit -m "feat(enrich): 新手友好度分级与三步安装向导"
 
 **Interfaces:**
 - Consumes: Task 2–14 全部
+- **R41（控制者插入，必做）—— 两个"没有生产者"的评分子项必须在这里接线**。Task 4B 评审确认：`hasRelease90d` 与 `extra.growing` 在全仓库**只有读取处、没有写入处**，导致生产环境 `release90d` 恒 0、`growth` 恒为中性 2，口碑轴实际只能拿 24–28/30（fixture 手写了合理值，所以测试全绿而生产必错）。本任务必须：
+  - 对每个候选执行 **`repo.hasRelease90d = hasRecentRelease(release, now)`**（Task 11 的 R40 三态；`release === null` 时该字段为 `null`）。
+  - 用**与 Task 12 同一份历史 JSON** 计算 `extra.growing`：历史上有正增长 → `true`；有历史但无增长 → `false`；**尚无历史数据 → `null`**（走中性半分，不惩罚新项目）。
+  - 任一为 `null` 时（"没问到"而非"确认没有"）必须把本轮标记为 `degraded`，与 R33（RateLimitError 中止本轮）、R35（trending 返回空）同一类要求：**静默未知必须可见**。
+  - 并补一条**集成测试**证明这两个字段在本轮结果里被真正写入（不能只靠 fixture 里手写的值蒙过）。
 - Produces:
   - `runCollect({ dataDir, client, sources, now, offline }): Promise<{ date, boards: BoardResult[], apiCalls, degraded, markdown, json }>`
   - `BoardResult = { id, title, items: RankedItem[] }`
@@ -1370,7 +1410,7 @@ git commit -m "feat(web): 静态服务器与三榜单页面"
 - Modify: `public/app.js`, `public/index.html`, `public/style.css`
 
 **Interfaces:**
-- Consumes: `public/data/<date>.json` 里每条的 `install`、`reasons`、`scores`、`grade`、`chineseDoc`、`confidence`
+- Consumes: `public/data/<date>.json` 里每条的 `install`、`reasons`、`scores`、`grade`、`hasChinese`、`confidence`
 - Produces: 详情抽屉（三步向导 + 为什么上榜 + 复制按钮）与 `prepare.html` 新手准备页
 
 - [ ] **Step 1: 写失败测试** `test/page-content.test.mjs`（静态页面内容断言，保证不出现行话、必备元素存在）

@@ -93,14 +93,18 @@ function toItem(ranked) {
  * 组装日报对象（网站读的那份 JSON 的内容）。
  * @param {{ id: string, title: string, items: object[] }[]} boards 三个榜单
  * @param {string} date UTC 日期（YYYY-MM-DD）
- * @param {{ generatedAt?: string, degraded?: boolean, notes?: string[] }} [options]
+ * @param {{ generatedAt?: string, degraded?: boolean, notes?: string[], demo?: boolean }} [options]
  *   degraded 表示"这一轮有东西没拿到"（R33/R35/R41），界面据此提示"本期数据不完整"；
- *   notes 是给维护者看的降级原因清单，也落进 JSON，便于事后追查是哪一路出了问题。
+ *   notes 是给维护者看的降级原因清单，也落进 JSON，便于事后追查是哪一路出了问题；
+ *   demo（R128）：这一天的数据来自**内置样本**（离线采集），不是真的从网上采来的。
+ *   只有为 true 时才写这一位（真实采集的日报里根本没有这个字段）。页面据此在**当天**打上
+ *   「这是演示数据（示例）」——只靠"演示模式"一个开关堵不住这条路：`collect --offline`
+ *   会把样本写进真实数据目录，那时候它同样不能被当成今天的热门项目展示。
  * @returns {object} 可直接 JSON.stringify 的日报对象
  */
 export function buildDailyPayload(boards, date, options = {}) {
   const list = Array.isArray(boards) ? boards : [];
-  return {
+  const payload = {
     date,
     generatedAt: options.generatedAt ?? new Date().toISOString(),
     degraded: options.degraded === true,
@@ -111,6 +115,9 @@ export function buildDailyPayload(boards, date, options = {}) {
       items: (Array.isArray(board.items) ? board.items : []).map(toItem),
     })),
   };
+  // 只在是样本数据时才加这一位：真实采集的日报形状保持原样（连键的顺序都不动）。
+  if (options.demo === true) payload.demo = true;
+  return payload;
 }
 /**
  * 把三个榜单渲染成日报 JSON 字符串（缩进 2 空格，与数据层写文件的口径一致）。

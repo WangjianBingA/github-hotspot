@@ -9,11 +9,13 @@
 //   · generateDemoData(dir)：**生成**。真跑离线管线——sources/pipeline 的离线源 → collect.mjs 的
 //     编排 → exporters/json.mjs 的日报对象 → store/datastore.mjs 落盘。分数、排序、上榜理由、
 //     安装向导全部来自正式代码，这里一个字都不手写（测试会把生成结果与已提交的数据逐字节比对）。
+//     生成出来的每一天都带着 `demo: true`（R128：离线采集写进去的），清单里的那一位由它派生。
 //   · seedDemoData(dir)：把**已生成好、并且已经提交进版本库**的 dataset/ 原样复制到目标目录。
 //     serve --demo 走这一条，于是"浏览器里看到的那份数据"与"仓库里那一份"是同一批字节。
 //
 // 重新生成的办法（改了评分规则、或想换演示日期时）：
 //   node fixtures/demo/seed.mjs --write
+// 它是**幂等**的：数据没变时跑完 git status 是干净的（清单的时间戳也固定，R131）。
 // 生成完记得把 fixtures/demo/dataset/ 的变化一起提交 —— test/demo.test.mjs 会盯住两者一致。
 //
 // 为什么目录叫 dataset 而不是 data：.gitignore 里的 `data/` 会忽略**任何**叫 data 的目录
@@ -122,8 +124,10 @@ export async function generateDemoData(dataDir) {
       throw new Error(`演示数据没生成完整：${date}（degraded=${result.degraded}）${result.warnings.join('；')}`);
     }
   }
-  // 最后落清单，并显式写下"这是演示数据"（R127：页面据此标注，不靠猜）。
-  updateIndex(dataDir, { demo: true });
+  // 最后落清单：`demo` 一位由三天数据自己派生（每天都写着 demo: true），
+  // 时间戳固定成最新那一天的 00:00Z —— 这样 `--write` 重新生成是真正的 no-op，
+  // 不会每次都留下一个"只有时间戳不同"的 diff 让人分不清哪次改动是真的（R131）。
+  updateIndex(dataDir, { now: new Date(`${DEMO_DATES[DEMO_DATES.length - 1]}T00:00:00.000Z`) });
   return dataDir;
 }
 

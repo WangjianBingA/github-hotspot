@@ -86,17 +86,23 @@ export function listDates(dataDir) {
 
 /**
  * 扫描数据目录里的日报，重写 index.json。
+ *
+ * 清单里的 `demo` 一位（R127/R128）是**从当天数据派生**出来的：只有当列出的每一天都在自己的
+ * 日报里写着 `demo: true`（离线采集的内置样本）时，才在清单里写下这一位。这样：
+ *   · 页面不必去猜数据内容（猜日期、猜分数早晚会猜错）；
+ *   · 混着放也不会标错——只要目录里有一天是真实数据，整份清单就不会被标成演示数据，
+ *     而那一天的数据自己也没带这一位。
  * @param {string} dataDir 数据目录
- * @param {{ demo?: boolean }} [options] demo: true 会在清单里写下 `demo: true`。
- *   这是**演示数据自己声明自己**（R127）：页面据此标注"这是演示数据"，而不是去猜数据内容
- *   （猜日期、猜分数都会猜错，而且猜错的代价是把演示数据当成真实榜单展示给用户）。
- *   真实采集不传这个参数，于是真实的清单里根本不会有这个字段。
+ * @param {{ now?: Date }} [options] now：显式传入"现在"（默认取真实时钟）。
+ *   演示数据的生成会传一个固定时刻，好让"重新生成一遍"是真正的 no-op，而不是每次都留一个
+ *   只有时间戳不同的 diff——那种噪声会让人分不清哪次改动是真的。
  * @returns {string[]} 日期列表（降序）
  */
 export function updateIndex(dataDir, options = {}) {
   const dates = listDates(dataDir);
-  const index = { dates, updatedAt: new Date().toISOString() };
-  if (options?.demo === true) index.demo = true;
+  const now = options?.now instanceof Date && Number.isFinite(options.now.getTime()) ? options.now : new Date();
+  const index = { dates, updatedAt: now.toISOString() };
+  if (dates.length > 0 && dates.every((date) => readDaily(dataDir, date)?.demo === true)) index.demo = true;
   writeJsonAtomic(join(dataDir, 'index.json'), index);
   return dates;
 }

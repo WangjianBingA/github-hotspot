@@ -898,11 +898,13 @@ export function buildBoardView(input = {}) {
   });
 
   const notices = [];
-  // R127：演示数据先说自己是谁。这句话改变用户怎么读下面每一个数字，所以排在**最前面**，
+  // R127/R128：演示数据先说自己是谁。这句话改变用户怎么读下面每一个数字，所以排在**最前面**，
   // 而且每一次渲染都重新算——数据还在读、读不出来、切了榜单、换了日期，标注都在。
-  // demo 是调用方显式传进来的事实（数据清单里写着 demo: true），不是这里从数据内容里猜的：
-  // 猜日期、猜分数早晚会猜错，而猜错的代价是把演示数据当成真实榜单展示给用户。
-  if (source.demo === true) {
+  // 两个来源，都是**显式声明**，这里不猜数据内容（猜日期、猜分数早晚会猜错）：
+  //   · 当天数据自己写着 demo: true（离线采集写进去的，R128）——所以 collect --offline 把样本
+  //     写进真实数据目录时，这一天照样会被标出来；
+  //   · 整份数据集的清单写着 demo: true（演示数据集）——所以数据还在读的那一瞬间就已经标上了。
+  if (source.demo === true || daily?.demo === true) {
     notices.push({ key: 'demo', html: demoNotice(date) });
   }
   // 顺序即重要性：数据不完整排最前（它影响整页读数），然后才是"这块为什么是空的"。
@@ -1109,28 +1111,33 @@ export function demoArchiveNotice() {
 /**
  * 历史归档页的主体内容（R93：显示决策住在纯函数层，浏览器里验不了的东西就是验不了的东西）。
  * 四种情况都要说人话，而且**建议必须做得到**（R99 / R104 / R107）：
- *   · 清单压根没读到 → 说清"读不出来"，不替数据断言"一天都没有"（那是两件事）；
+ *   · 清单读不出来（没读到，或者读到了但**形状不对**，例如 dates 不是列表）→ 说清"读不出来"，
+ *     不替数据断言"一天都没有"（那是两件事，R101/R129）；
  *   · 一天都没有     → 说清没有，并给出今天真能用的两条命令（都写在 package.json 里）；
  *   · 只有一天       → 照实说"只有一天"，给出这一天的入口（不假装还有别的可选）；
  *   · 多天           → 按最新在前列出每一天，每个日期都能点进去看那一天的榜单。
  * 认不出的日期一律不列：列出来就是一条点进去什么都没有的链接。
- * @param {{ loaded?: boolean, dates?: unknown, demo?: boolean }} [input]
- *   loaded: 清单读到了没有（false = 文件不在或坏了）；dates 来自清单；demo 是显式输入（R127）
+ * 判断"清单能不能用"这件事也住在这一层：调用方只管把**读到的那个对象**交进来（R129），
+ * 不要在 DOM 层自己解释形状——那样界面上会冒出第二套口径。
+ * @param {{ index?: unknown }} [input] index：从 data/index.json 读到的对象；读不到时给 null
  * @returns {string} HTML
  */
 export function historyView(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
-  const dates = dateList(source);
+  const index = source.index ?? null;
+  const dates = dateList(index);
+  // 可用 = 读到了一个对象、而且它真的带着一份日期列表。缺字段、dates 不是数组（{"dates":42}）都算坏。
+  const usable = index !== null && typeof index === 'object' && !Array.isArray(index) && Array.isArray(index.dates);
   const blocks = [];
-  if (source.demo === true) blocks.push(demoArchiveNotice());
+  if (usable && index.demo === true) blocks.push(demoArchiveNotice());
 
-  if (source.loaded === false) {
-    // R101 的老毛病：读不到东西时还硬要报一句"没有数据"。文件读不出来与"确实没有这一天"
-    // 是两件事，说混了用户就不知道是自己没采集、还是文件坏了。
-    blocks.push('<p class="empty">往期数据读不出来。这一页要去读同目录下的数据文件，但没读到它'
+  if (!usable) {
+    // R101/R129 的老毛病：读不到东西时还硬要报一句"没有数据"。文件没读到、文件坏了、文件在
+    // 但形状不对，与"确实没有这一天"是三件事，混着说用户就不知道是自己没采集、还是文件坏了。
+    blocks.push('<p class="empty">往期数据读不出来。这一页要去读同目录下的数据文件，但没读到一份能用的'
       + '（可能还没生成，或者文件被改坏了）。</p>'
       + `<p>在项目目录里运行 ${DEMO_COMMAND_HINT}，可以先看到一份带标注的演示数据；`
-      + `跑一次 ${COLLECT_COMMAND} 就会有你自己的数据。</p>`);
+      + `跑一次 ${COLLECT_COMMAND} 就会写出一份新的（用的是内置样本，页面上会标成演示数据）。</p>`);
   } else if (dates.length === 0) {
     blocks.push('<p class="empty">还没有任何往期数据。这个网站读的是数据文件，有数据才会有一天可以回看。</p>'
       + `<p>第一次用、又不想联网的话：在项目目录里运行 ${DEMO_COMMAND_HINT}；`

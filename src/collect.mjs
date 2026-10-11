@@ -551,7 +551,12 @@ export async function runCollect({ dataDir, client, sources, now = new Date(), o
   // generatedAt 用 now 而不是 Date.now()：同一轮输入必须产出逐字节相同的文件（spec §8 的幂等要求，
   // 也让"今天重跑一次"不会在 git diff 里留下一个只有时间戳不同的噪声提交）。
   const generatedAt = ctx.now.toISOString();
-  const payload = buildDailyPayload(boards, ctx.date, { generatedAt, degraded: ctx.degraded, notes: ctx.warnings });
+  // R128：离线采集用的就是内置样本，所以**采集时**就知道这一天不是真的从网上采来的，把这一位写进
+  // 当天数据（真实联网采集不写）。页面按当天数据标注，于是"样本数据被当成今天的热门项目展示"
+  // 这条路被堵住——不管它是被 serve --demo 服务、还是被 collect --offline 写进真实数据目录。
+  const payload = buildDailyPayload(boards, ctx.date, {
+    generatedAt, degraded: ctx.degraded, notes: ctx.warnings, demo: offline === true,
+  });
   if (wroteDaily) {
     writeDaily(dataDir, ctx.date, payload);
     updateIndex(dataDir);

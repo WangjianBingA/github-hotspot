@@ -31,13 +31,9 @@ function draw(html) {
 
 async function boot() {
   const index = await getJson(`${DATA_BASE}index.json`);
-  // loaded 区分"清单没读到"和"清单里一天都没有"——两件事的说法不一样（R101 的老毛病就是混为一谈）。
-  // demo 是数据清单里的显式声明（R127）：页面据此标注这是演示数据，绝不从数据内容里猜。
-  draw(historyView({
-    loaded: index !== null,
-    dates: index?.dates,
-    demo: index?.demo === true,
-  }));
+  // 原样把读到的东西交出去（读不到就是 null）："这份清单能不能用"由 render.mjs 判断——
+  // 没读到、文件坏了、文件在但形状不对，三者都要落到同一句"读不出来"，那属于显示决策（R129）。
+  draw(historyView({ index }));
 }
 
 await boot();

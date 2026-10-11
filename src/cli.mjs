@@ -127,11 +127,14 @@ async function serve(args, env, logger) {
     preview = await startPreview(args, env, logger);
   } catch (error) {
     // 端口被占、演示数据文件不在（被人删了）……都收敛成一句人话。
-    // 下一步只给与当下这一种情况对得上的那一个（R99 的同一条道理：建议必须做得到），
-    // 而且写成 PowerShell 里真能照做的样子（`PORT=8766 npm start` 那种写法在这里不成立）。
+    // 下一步只给与当下这一种情况对得上的那一个（R99 的同一条道理：建议必须做得到）。
+    // R131：新手准备页把 PowerShell 与 cmd 都教成可行的路子，所以两种窗口的写法都要给
+    // （`PORT=8766 npm start` 那种写法两个都不是；cmd 里还要用 set "NAME=VALUE" 才不带多余空格）。
     const command = args.includes('--demo') ? 'npm run demo' : 'npm start';
     const busy = error?.code === 'EADDRINUSE' || error?.code === 'EACCES';
-    logger.error(`起不来本地预览服务：${error?.message ?? error}${busy ? `。换个端口再试：$env:PORT="8766"; ${command}` : ''}`);
+    const retry = `换个端口再试：PowerShell 里 $env:PORT="8766"; ${command}`
+      + `（cmd 里 set "PORT=8766" && ${command}）`;
+    logger.error(`起不来本地预览服务：${error?.message ?? error}${busy ? `。${retry}` : ''}`);
     return 1;
   }
   const { server, url, dataRoot } = preview;

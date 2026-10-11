@@ -20,7 +20,9 @@ import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEMO_DATA_DIR, DEMO_DATES, generateDemoData, seedDemoData } from '../fixtures/demo/seed.mjs';
 import { startPreview } from '../src/cli.mjs';
-import { listDates, readDaily, readHistory } from '../src/store/datastore.mjs';
+import { runCollect } from '../src/collect.mjs';
+import { createOfflineSources } from '../src/sources/pipeline.mjs';
+import { listDates, readDaily, readHistory, updateIndex, writeDaily } from '../src/store/datastore.mjs';
 import { WEIGHTS, HOT_REFERENCE_STARS_PER_WEEK } from '../src/config/weights.mjs';
 import { buildBoardView, dateList, demoNotice, historyView } from '../public/render.mjs';
 
@@ -92,12 +94,33 @@ test('演示数据里至少有一条估算、一条实测，三个榜都真的�
   }
 });
 
-test('演示数据在清单里显式写着"这是演示数据"，逐日文件里没有这个字段', () => {
+test('演示数据每天都带着"这是演示数据"，清单里的那一位是从每天的数据派生出来的', () => {
   const d = dir();
   seedDemoData(d);
+  for (const date of DEMO_DATES) {
+    assert.equal(readDaily(d, date).demo, true, `${date} 的当天数据自己就该带着这一位`);
+  }
   const index = JSON.parse(readFileSync(join(d, 'index.json'), 'utf8'));
-  assert.equal(index.demo, true, '页面靠这一位知道自己在看演示数据，不是靠猜数据内容');
-  assert.equal(readDaily(d, DEMO_DATES[2]).demo, undefined, '演示标记是这份数据集的声明，不是每日数据的一部分');
+  assert.equal(index.demo, true, '页面（含归档页）靠这一位知道整份数据是演示数据');
+});
+
+test('R128：清单里的演示位由当天数据派生，混进任何一天真实数据就不该再标', () => {
+  const d = dir();
+  const day = (date, extra = {}) => ({ date, generatedAt: `${date}T00:00:00.000Z`, degraded: false, notes: [], boards: [], ...extra });
+  writeDaily(d, '2026-10-10', day('2026-10-10', { demo: true }));
+  updateIndex(d);
+  assert.equal(JSON.parse(readFileSync(join(d, 'index.json'), 'utf8')).demo, true, '三天都是样本时才算一份演示数据集');
+  writeDaily(d, '2026-10-11', day('2026-10-11'));
+  updateIndex(d);
+  assert.equal(JSON.parse(readFileSync(join(d, 'index.json'), 'utf8')).demo, undefined,
+    '只要有一天是真实数据，就不能把整份清单标成演示数据（那是在替真实数据说假话）');
+});
+
+test('R131：updateIndex 可以接受显式的"现在"，演示数据用它把时间戳固定下来', () => {
+  const d = dir();
+  writeDaily(d, '2026-10-10', { date: '2026-10-10', generatedAt: '2026-10-10T00:00:00.000Z', degraded: false, notes: [], boards: [], demo: true });
+  updateIndex(d, { now: new Date('2026-10-10T00:00:00.000Z') });
+  assert.equal(JSON.parse(readFileSync(join(d, 'index.json'), 'utf8')).updatedAt, '2026-10-10T00:00:00.000Z');
 });
 
 test('已提交的演示数据与生成器逐字节一致（分数不是手写的）', async () => {
@@ -116,14 +139,17 @@ test('已提交的演示数据与生成器逐字节一致（分数不是手写�
     readNormalized(join(DEMO_DATA_DIR, 'history', `${month}.json`)),
     '历史档案与重新生成的结果不一致',
   );
-
-  // 清单里只有 updatedAt 会随生成时刻变，其余（日期、演示标记）必须一致。
-  const generated = JSON.parse(readFileSync(join(d, 'index.json'), 'utf8'));
+  // R131：清单也要逐字节一致 —— 不然 `--write` 每次都留下一个只有时间戳不同的 diff，
+  // "重新生成"就永远不是 no-op，谁都说不清那次改动是真的还是噪声。
+  assert.equal(
+    readNormalized(join(d, 'index.json')),
+    readNormalized(join(DEMO_DATA_DIR, 'index.json')),
+    '清单与重新生成的结果不一致（时间戳应当是固定的）',
+  );
   const committed = JSON.parse(readFileSync(join(DEMO_DATA_DIR, 'index.json'), 'utf8'));
-  assert.deepEqual(generated.dates, committed.dates);
+  assert.deepEqual(committed.dates, [...DEMO_DATES].reverse());
   assert.equal(committed.demo, true);
   assert.deepEqual(Object.keys(committed).sort(), ['dates', 'demo', 'updatedAt']);
-  assert.deepEqual(Object.keys(generated).sort(), ['dates', 'demo', 'updatedAt']);
 
   // 已提交的目录里不许有别的东西：多出来的文件说明有人手工塞过内容，或者生成器留下了残留。
   assert.deepEqual(
@@ -175,6 +201,40 @@ test('演示数据必须真的会进版本库：它不在被忽略的 data/ 目�
   assert.equal(ignored(join(DEMO_DATA_DIR, 'index.json')), false, '演示数据被忽略了：新克隆将什么都看不到');
 });
 
+test('R128：离线采集（内置样本）产出的当天数据自己带着演示位，页面按当天数据标注', async () => {
+  const d = dir();
+  const result = await runCollect({
+    dataDir: d, sources: createOfflineSources(), now: new Date('2026-10-10T00:00:00.000Z'), offline: true,
+  });
+  assert.equal(result.payload.demo, true, '离线源就是内置样本，这一轮的数据必须照实声明');
+  assert.equal(readDaily(d, '2026-10-10').demo, true, '写进文件的那一份也要有');
+  assert.equal(JSON.parse(readFileSync(join(d, 'index.json'), 'utf8')).demo, true, '清单由当天数据派生，归档页也才标得到');
+
+  // 关键：页面**只**拿到当天数据（调用方没有额外传 demo）时，也必须给出标注。
+  const view = buildBoardView({
+    boardId: 'weekly', items: [], daily: readDaily(d, '2026-10-10'), dates: ['2026-10-10'], date: '2026-10-10',
+  });
+  const notice = view.notices.find((item) => item.key === 'demo');
+  assert.ok(notice !== undefined, '样本数据不许在没有标注的情况下被当成今天的热门项目展示');
+  assert.match(notice.html, /演示数据（示例）/);
+  assert.match(notice.html, /2026-10-10/);
+});
+
+test('R128：真实（联网）采集路径不写演示位，页面也就没有演示标注', async () => {
+  const d = dir();
+  // offline: false 就是真实那条路：没有可用的网络客户端，于是拿不到候选，但路径是联网路径。
+  const result = await runCollect({
+    dataDir: d, sources: { discover: async () => ({ candidates: [] }) }, now: new Date('2026-10-10T00:00:00.000Z'),
+  });
+  assert.equal(result.payload.demo, undefined, '真实采集不许写这一位');
+  assert.notEqual(readDaily(d, '2026-10-10').demo, true);
+  assert.notEqual(JSON.parse(readFileSync(join(d, 'index.json'), 'utf8')).demo, true);
+  const view = buildBoardView({
+    boardId: 'weekly', items: [], daily: readDaily(d, '2026-10-10'), dates: ['2026-10-10'], date: '2026-10-10',
+  });
+  assert.equal(view.notices.find((item) => item.key === 'demo'), undefined, '真实数据不许被标成演示数据');
+});
+
 // ---------- ② serve --demo 端到端 ----------
 
 test('serve --demo 把演示站点端到端服务出来，数据只落在自己的目录里', async () => {
@@ -203,17 +263,22 @@ test('serve --demo 把演示站点端到端服务出来，数据只落在自己�
   });
 });
 
-test('不加 --demo 时不提供演示数据集：站点照旧从 public/ 出', async () => {
+test('不加 --demo 时不会服务演示数据集：/data/ 照旧指向 public/data', async () => {
   await withPreview([], async ({ base, dataRoot }) => {
+    // 结构上的事实：没有 --demo 就没有 dataRoot，服务器不会去找那份演示数据。
     assert.equal(dataRoot, null);
     assert.match(await (await fetch(`${base}/`)).text(), /本周飙升/);
-    // public/data 可能不存在（全新克隆），也可能是开发者自己采集的真实数据；
-    // 两种情况都不该出现演示标记——演示数据只活在它自己的目录里。
+
+    // 行为上的事实：/data/ 下的东西与 public/data 里的**同一份文件逐字节相同**（而不是演示数据集那一份）。
+    // 这里不能断言"index.json 不许带 demo 位"：public/data 里也可能是 collect:offline 采来的样本，
+    // 那种数据**应该**带 demo 位（R128），在真实模式下调出来也必须照样被标注。
     const response = await fetch(`${base}/data/index.json`);
+    const realPath = join(PUBLIC_DIR, 'data', 'index.json');
     if (response.status === 200) {
-      assert.notEqual((await response.json()).demo, true, '真实模式里不许出现演示数据');
+      assert.equal(await response.text(), readNormalized(realPath), '真实模式必须服务 public/data 里的那一份');
     } else {
       assert.equal(response.status, 404);
+      assert.ok(!existsSync(realPath), 'public/data/index.json 不在时，这里就该是 404');
     }
   });
 });
@@ -248,7 +313,7 @@ test('R127：日期是外部输入，进标注之前必须转义', () => {
 // ---------- ④ 历史归档页 ----------
 
 test('历史归档页：一天数据都没有时说清没有，并给出真能用的命令', () => {
-  const html = historyView({ dates: [] });
+  const html = historyView({ index: { dates: [] } });
   assert.match(html, /还没有任何往期数据/);
   assert.match(html, /npm run demo/);
   assert.match(html, /npm run collect:offline/);
@@ -256,7 +321,7 @@ test('历史归档页：一天数据都没有时说清没有，并给出真能�
 });
 
 test('历史归档页：清单读不出来时不许说成"一天都没有"（那是在替数据断言）', () => {
-  const html = historyView({ loaded: false, dates: [] });
+  const html = historyView({ index: null });
   assert.match(html, /读不出来/);
   assert.ok(!html.includes('还没有任何往期数据'), '"文件读不到"与"确实没有数据"是两件事，说法不能混');
   // 读不出来时同样要给一条走得通的路，而且命令都真实存在。
@@ -264,30 +329,43 @@ test('历史归档页：清单读不出来时不许说成"一天都没有"（那
   assert.match(html, /npm run collect:offline/);
 });
 
+test('R129：清单读到了但形状不对，同样走"读不出来"，不许说成"一天都没有"', () => {
+  // {"dates":42} 这种清单是**坏**，不是"没有数据"：文件在、里面有东西，只是不是日期列表。
+  for (const index of [{ dates: 42 }, {}, { dates: '2026-10-10' }, 42, '不是对象', true]) {
+    const html = historyView({ index });
+    assert.match(html, /读不出来/, `清单 ${JSON.stringify(index)} 应走"读不出来"那支`);
+    assert.ok(!html.includes('还没有任何往期数据'), `清单 ${JSON.stringify(index)} 被说成了"一天都没有"`);
+  }
+  // 形状对、只是没有天：这才是"还没有任何往期数据"。
+  assert.match(historyView({ index: { dates: [] } }), /还没有任何往期数据/);
+  // 形状对、有天数：照常列出。
+  assert.match(historyView({ index: { dates: ['2026-10-10'] } }), /只有一天/);
+});
+
 test('历史归档页：只有一天时照实说只有一天，并给出这一天的入口', () => {
-  const html = historyView({ dates: ['2026-10-10'] });
+  const html = historyView({ index: { dates: ['2026-10-10'] } });
   assert.match(html, /只有一天/);
   assert.match(html, /2026-10-10/);
   assert.match(html, /href="index\.html\?date=2026-10-10"/);
 });
 
 test('历史归档页：多天时按最新在前列出每一天', () => {
-  const html = historyView({ dates: ['2026-10-08', '2026-10-10', '2026-10-09'] });
+  const html = historyView({ index: { dates: ['2026-10-08', '2026-10-10', '2026-10-09'] } });
   const links = [...html.matchAll(/href="index\.html\?date=(\d{4}-\d{2}-\d{2})"/g)].map((match) => match[1]);
   assert.deepEqual(links, ['2026-10-10', '2026-10-09', '2026-10-08'], '日期要最新在前，不能照文件里的顺序');
   assert.match(html, /3 天/);
 });
 
 test('历史归档页：认不出的日期一律不列（不给一条点进去什么都没有的链接）', () => {
-  const html = historyView({ dates: ['2026-10-10', 'not-a-date', 42, '', '2026-10-10'] });
+  const html = historyView({ index: { dates: ['2026-10-10', 'not-a-date', 42, '', '2026-10-10'] } });
   const links = [...html.matchAll(/href="index\.html\?date=([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(links, ['2026-10-10']);
   assert.ok(!html.includes('not-a-date'));
 });
 
-test('历史归档页：演示数据在归档页上同样要被标注', () => {
-  assert.match(historyView({ dates: ['2026-10-10'], demo: true }), /演示数据（示例）/);
-  assert.ok(!historyView({ dates: ['2026-10-10'] }).includes('演示数据'), '真实数据的归档页不许挂演示标注');
+test('历史归档页：演示数据在归档页上同样要被标注（这一位由清单派生，页面自己读）', () => {
+  assert.match(historyView({ index: { dates: ['2026-10-10'], demo: true } }), /演示数据（示例）/);
+  assert.ok(!historyView({ index: { dates: ['2026-10-10'] } }).includes('演示数据'), '真实数据的归档页不许挂演示标注');
 });
 
 test('dateList：两个页面共用同一份清单口径（认形状、去重、最新在前）', () => {
@@ -309,14 +387,40 @@ test('历史归档页自己的脚本只做取数与写 DOM：文案全在 render
 
 test('评分口径页存在，写出的三轴满分与权重表一致', () => {
   const text = read('about.html').replace(/<!--[\s\S]*?-->/g, '');
+  // R131：数字必须带边界。`45` 不带边界会匹配上 `450`——页面本身是对的，但那种断言没有鉴别力。
   for (const value of [WEIGHTS.hot, WEIGHTS.reputation, WEIGHTS.runnable]) {
-    assert.match(text, new RegExp(String(value)), `页面上要写出 ${value} 这个满分`);
+    assert.match(text, new RegExp(`\\b${value}\\b`), `页面上要写出 ${value} 这个满分`);
   }
   assert.match(text, /热度/);
   assert.match(text, /口碑/);
   assert.match(text, /新手友好/);
   // 热度那一句给了具体参考值（达到它就满分）：这个数也来自权重表，写错了同样是说错话。
-  assert.match(text, new RegExp(String(HOT_REFERENCE_STARS_PER_WEEK)), `页面上要写出 ${HOT_REFERENCE_STARS_PER_WEEK} 这个参考值`);
+  assert.match(text, new RegExp(`\\b${HOT_REFERENCE_STARS_PER_WEEK}\\b`), `页面上要写出 ${HOT_REFERENCE_STARS_PER_WEEK} 这个参考值`);
+  // 负面对照：证明上面那种写法真的带边界（否则这条用例只是看着严格）。
+  assert.equal(new RegExp(`\\b${WEIGHTS.hot}\\b`).test(`${WEIGHTS.hot}0`), false);
+});
+
+test('R130：降级阶梯的顺序与代码一致（官方趋势页在归档快照差值之前）', () => {
+  const text = read('about.html').replace(/<!--[\s\S]*?-->/g, '');
+  // star-velocity.mjs 的实际顺序：逐日记录差值 → 新建项目 → 官方趋势页(reported)
+  // → 月度归档快照差值(measured) → 事件外推(estimated)。页面必须按这个顺序讲。
+  const positions = ['逐日记录', 'GitHub 官方数据', '归档快照', '活动记录'].map((phrase) => {
+    const at = text.indexOf(phrase);
+    assert.ok(at > -1, `口径页里应有「${phrase}」这一级`);
+    return at;
+  });
+  for (let i = 1; i < positions.length; i += 1) {
+    assert.ok(positions[i - 1] < positions[i], '阶梯顺序与代码不一致');
+  }
+});
+
+test('R130：页面都不许声称"每天采集一次"（仓库里没有任何调度）', () => {
+  // 四个页面一起扫：这条不实说法是从 index.html 继承下来的，谁都不许再抄一遍。
+  for (const file of ['index.html', 'about.html', 'history.html', 'prepare.html']) {
+    const text = read(file).replace(/<!--[\s\S]*?-->/g, '');
+    assert.ok(!/每天[^。；\n]{0,8}采集|每天自动|自动更新|每天都会更新/.test(text),
+      `${file} 把一个不存在的定时任务说成了事实`);
+  }
 });
 
 test('评分口径页说清三件必须诚实的事：数据从哪来、跟 GitHub 什么关系、看不看得到你的电脑', () => {

@@ -892,10 +892,20 @@ test('R111：没有安装向导的项目，卡片与提示不许承诺"三步"�
   assert.ok(!brokenCard.includes('怎么装'), 'steps 里没有对象时不算有向导，卡片不许承诺');
   assert.equal(detailDrawer({ boardId: 'weekly', item: brokenShape }).includes('install-steps'), false);
 
-  // 列表上方的说明同样按"这一榜有没有真的向导"分：一条都没有时不能说"拆成三步"。
+  // 列表上方的说明同样按"这一榜有没有真的向导/事实"分：一条都没有时不能说"拆成三步"。
   const noGuideHint = hintsOf('weekly');
   assert.ok(!noGuideHint.includes('拆成三步'), '一条向导都没有时不许承诺三步');
   assert.match(noGuideHint, /没有带现成安装步骤的项目/);
+  // R120：这一榜的条目一个事实都没有（没有语言/收藏/时间/许可证…）时，榜级文案也不许承诺「项目基本事实」。
+  // 注意 threeItems 是带 language 与 stars 的，所以要用一个真的"稀疏榜"来验。
+  const sparseHint = buildBoardView({
+    items: [item({ ownerRepo: 'x/sparse', name: 'sparse', rank: 1 })],
+    boardId: 'weekly',
+    daily: daily(),
+  }).hints.map((h) => h.html).join('\n');
+  assert.ok(!sparseHint.includes('项目基本事实'), '这一榜没有事实表时，榜级文案不许承诺它');
+  // 正面对照：真有事实的榜照旧承诺它（否则这条断言会空转）。
+  assert.match(noGuideHint, /项目基本事实/);
   // 混合榜（一条有向导、一条没有）：榜级文案只能说"有现成安装步骤的项目会……"，不能对整榜打包票。
   // 这里禁的是老写法——把「怎么装」拆成三步**直接放在句首**（那句话等于说整榜每一条都有三步）。
   const mixedHint = buildBoardView({

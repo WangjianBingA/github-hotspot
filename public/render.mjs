@@ -193,21 +193,24 @@ const cardDetailEntry = (boardId, item) => {
 
 /**
  * 列表上方那句说明的几种说法。
- * R111 / R118：与抽屉里真有的东西同源；榜级文案只能承诺**这一榜真的有的东西**——
- * 混合榜（有的条目有向导、有的没有）不能对整榜说"拆成三步"。
+ * R111 / R118 / R120：与抽屉里真有的东西同源，而且**榜级文案只承诺这一榜真的会给出的东西**——
+ * 混合榜（有的条目有向导、有的没有）不能对整榜说"拆成三步"；一条事实都没有的榜（稀疏数据）
+ * 也不能把「项目基本事实」写进承诺里。
  * @param {string} boardId 榜单 id
  * @param {boolean} boardHasGuide 这一榜里有没有任何一条带安装向导
+ * @param {boolean} boardHasFacts 这一榜里有没有任何一条有"项目基本事实"
  * @returns {string} HTML 片段（纯文本 + 一个链接）
  */
-const cardDetailHintText = (boardId, boardHasGuide) => {
+const cardDetailHintText = (boardId, boardHasGuide, boardHasFacts) => {
   const tail = '看不懂的地方，先看<a href="prepare.html">新手准备页</a>，从头照着做一遍。';
+  const facts = boardHasFacts ? '、项目基本事实' : '';
   if (boardId === CLASSIC_ID) {
-    return `点开卡片会打开详情：这个榜按总收藏人数排，所以详情里说的是「${DRAWER_TITLES.classic}」、`
-      + '项目基本事实，以及一句话介绍。' + tail;
+    return `点开卡片会打开详情：这个榜按总收藏人数排，所以详情里说的是「${DRAWER_TITLES.classic}」`
+      + `${facts}，以及一句话介绍。` + tail;
   }
   const front = boardHasGuide
-    ? '点开卡片会打开详情：有现成安装步骤的项目会把「怎么装」拆成三步，每一步做什么都写清楚了。'
-    : '点开卡片会打开详情：为什么上榜、项目基本事实、一句话介绍。'
+    ? `点开卡片会打开详情：有现成安装步骤的项目会把「怎么装」拆成三步，每一步做什么都写清楚了${facts}。`
+    : `点开卡片会打开详情：为什么上榜${facts}、一句话介绍。`
       + '这个榜上目前没有带现成安装步骤的项目，所以每一条都会指路到它自己的主页。';
   return front + tail;
 };
@@ -567,6 +570,7 @@ export function cardDetailHint(input = {}) {
   return cardDetailHintText(
     typeof source.boardId === 'string' ? source.boardId : '',
     source.hasGuide === true,
+    source.hasFacts === true,
   );
 }
 
@@ -931,11 +935,12 @@ export function buildBoardView(input = {}) {
   }
 
   // 卡片上下的说明语也在这里定（R102）：app.js 只管把它们贴到页面上，自己不写一个字。
-  // R111：这句话要按榜单与"这一榜的条目里有没有向导"来给，否则会承诺抽屉里根本没有的小节。
+  // R111 / R118 / R120：这句话要按"这一榜实际会给出什么"来给，否则会承诺抽屉里根本没有的小节。
   const boardHasGuide = items.some((item) => hasInstallGuide(item?.install));
+  const boardHasFacts = items.some((item) => hasFactList(item));
   const hints = [
     { key: 'board-note', html: boardNote(boardId) },
-    { key: 'card-detail', html: cardDetailHintText(boardId, boardHasGuide) },
+    { key: 'card-detail', html: cardDetailHintText(boardId, boardHasGuide, boardHasFacts) },
     { key: 'difficulty-filter', html: difficultyFilterHint(boardId) },
   ].filter((hint) => hint.html !== '');
 

@@ -494,3 +494,53 @@ test('R142：README 里那三句容易读错的话与代码一致', () => {
   assert.match(manual, /这五条\*\*同时\*\*成立/, '手册要说清独立门槛是五条');
   assert.ok(!/上面那六条门槛/.test(manual), '手册里还留着"上面那六条门槛"（与它自己写着的五条矛盾）');
 });
+
+test('R147：门槛的条数在三处文档上一致（README、手册、口径页），而且都不把它说成第六条', () => {
+  // 这条断言存在的理由：R142 只扫了 README 与手册，漏了 about.html —— 而 about.html 正是
+  // README 指定的"完整口径"页、自己还写着"永远以这一页为准"。它就那样带着"六条"活到了终审。
+  const readme = read(README);
+  const manual = read(MANUAL);
+  const about = read(ABOUT).replace(/<!--[\s\S]*?-->/g, '');
+
+  assert.match(readme, /这五条/, 'README 要说清独立门槛是五条');
+  assert.match(manual, /这五条\*\*同时\*\*成立/, '手册要说清独立门槛是五条');
+  // 口径页：说五条，而且**不许**再把"资料清单"列成一个独立的编号项。
+  assert.match(about, /<strong>五条<\/strong>/, '口径页要说清独立门槛是五条');
+  assert.ok(!/上面那六条门槛|六条\*\*同时\*\*成立|这六条/.test(`${readme}\n${manual}\n${about}`), '还有文档在说"六条门槛"');
+  for (const [label, text] of [['README', readme], ['手册', manual], ['口径页', about]]) {
+    assert.match(text, /不是第六道|不是第六条/, `${label} 要说明"资料清单"不是第六条独立门槛`);
+  }
+  // 口径页那一节里：编号门槛必须是 5 条，而且"资料清单"不许出现在那 5 条里。
+  const start = about.indexOf('<h2>上榜门槛');
+  assert.ok(start > -1, '口径页缺了"上榜门槛"那一节');
+  const gates = about.slice(start, about.indexOf('</section>', start));
+  const numbered = [...gates.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => m[1].replace(/<[^>]+>/g, '').trim());
+  assert.equal(numbered.length, 5, `口径页的编号门槛应当正好 5 条，实际 ${numbered.length} 条：${numbered.join(' | ')}`);
+  assert.ok(!numbered.some((item) => item.includes('资料清单')), '资料清单不该出现在编号门槛里');
+  assert.match(gates, /资料清单/, '那句话仍要说（只是不能算作一道独立门槛）');
+});
+
+test('R148：工作流的清理步骤要"先还原被跟踪的文件、再删被忽略的文件"', () => {
+  const text = read(WORKFLOW);
+  const steps = workflowSteps(text);
+  const clean = steps.findIndex((s) => /git clean -Xfd/.test(s.body));
+  assert.ok(clean > -1, '找不到清理步骤');
+  const body = steps[clean].body;
+
+  // 只看**会被执行的那几行**（`run: |` 后面那些命令），不看注释：
+  // 注释里也写着这两条命令（那是解释为什么），拿整段做 includes 会把"命令被删掉"漏过去。
+  const runAt = body.indexOf('run: |');
+  assert.ok(runAt > -1, '清理步骤里找不到 run: |');
+  const commands = shellLines(body.slice(runAt + 'run: |'.length));
+  assert.ok(commands.length >= 2, `清理步骤里的命令太少（${commands.length} 条）：${JSON.stringify(commands)}`);
+  // 两行都要有，而且顺序是"先 checkout（还原被跟踪的）→ 再 clean（删被忽略的）"。
+  // `--ignore-unmatch` 是必需的：仓库里可能一个数据文件都还没提交过，那时裸 `git checkout --` 会报错。
+  assert.match(commands.join('\n'), /git checkout --ignore-unmatch -- public\/data daily/, '缺了"还原被跟踪文件"那一条命令');
+  assert.match(commands.join('\n'), /git clean -Xfd/, '缺了"删被忽略文件"那一条命令');
+  assert.ok(commands.join('\n').indexOf('git checkout') < commands.join('\n').indexOf('git clean'),
+    '必须先还原再清，否则同一天第二次运行会把样本留在盘上');
+  assert.match(body, /if:\s*always\(\)/, '清理步骤要写成 if: always()');
+  assert.ok(!/rm -rf public\/data/.test(shellLines(text).join('\n')), '不许在会执行的命令里 rm -rf public/data');
+  // 这条限制必须在注释里写明白：静态断言保证不了它，只能靠人在真实仓库里跑两次。
+  assert.match(text, /Run workflow 两次|手动 Run workflow/, '注释要写清"必须人工跑两次才能验证"这条限制');
+});

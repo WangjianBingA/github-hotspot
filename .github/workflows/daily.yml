@@ -71,15 +71,24 @@ jobs:
         #   ① 烟雾测试刚写下的**样本**（每一天都带 `demo: true`）——必须清掉；
         #   ② 仓库里**已经提交过**的真实数据（如果你照着 README 把采集产物放进仓库了）——绝不能删！
         #      删了它们，这一次提交就会把历史数据整批从仓库里抹掉。
-        # 所以这里用 `git clean -Xfd` 而不是 `rm -rf public/data daily`：
-        #   -X 只删「被 .gitignore 忽略的」文件——样本数据正是这一类（public/data 与 data/ 都被忽略），
-        #   而已经提交过的文件是**被跟踪**的，`git clean` 永远不会碰它们。
+        # 所以要两步（R148）：
+        #   · `git checkout --ignore-unmatch -- public/data daily`：**把被跟踪的文件还原成仓库里的版本**。
+        #     只靠下面那条 clean 是不够的 —— 同一天第二次运行时（手动 Run workflow 很常见），
+        #     当天那份文件**已经被跟踪**，它刚被烟雾测试覆盖成了样本，而 `git clean` 不碰被跟踪的文件。
+        #     加 `--ignore-unmatch`：这个仓库可能一个数据文件都还没提交过（那就没什么可还原的），
+        #     不加的话 `git checkout --` 会因为"路径不认识"直接报错，把整步弄红。
+        #   · `git clean -Xfd`：**只删被忽略的**文件（样本数据正是这一类：public/data 与 data/ 都被忽略）。
+        #   已经被跟踪的示例数据永远不会被这两条命令碰掉。
         # 为什么非清不可：如果联网采集这一步一条内容都没拿到，src/collect.mjs 会**故意跳过覆盖**当天文件
         # （宁可留着旧数据也不擦成空榜），于是被提交上去的就是烟雾测试留下的样本数据。
+        # ⚠️ 这套"只把真实数据提交上去"的保证**只做过静态断言**，没有在真实仓库里跑过两次 Actions。
+        #    第一次启用后请手动 Run workflow 两次，并检查那两次提交的 diff 里没有 `"demo": true`
+        #    （最快的命令：`git grep -c '"demo": true' HEAD -- public/data`，结果应为 0）。
         if: always()
         run: |
+          git checkout --ignore-unmatch -- public/data daily
           git clean -Xfd
-          echo "已清掉被忽略的样本数据（提交过的数据文件原样保留），接下来由联网采集重新写。"
+          echo "已还原被跟踪的数据、清掉被忽略的样本数据，接下来由联网采集重新写。"
 
       - name: 联网采集
         env:

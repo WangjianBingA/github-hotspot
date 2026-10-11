@@ -34,9 +34,15 @@ export const RUNNABLE_POINTS = {
   none: 0,
 };
 
-// 新手友好轴的"中文文档"分值（合计 7）：README 中文占比达阈值给 4 分，
-// 另有 README.zh-CN.md 一类的本地化文件再给 3 分。
+// 新手友好轴的"中文说明"分值（满分 7）：**要么 7 分、要么 0 分**，不按比例。
+// R143：判据是"真有中文"（detectChinese 的 hasChinese：中文文件名的本地化文件，或正文汉字占比达标
+// 且不是假名主导）。**不是** hasCjk —— 那个更宽的信号含着假名与谚文，只有 README.ja.md 的项目
+// 会因此白拿这 7 分，而这条轴、口径页、README、手册都把它叫「中文说明」。
+// readmeRatio / localizedFile 是**同一件事的两种证据**（满足其一就给满，见 scoreRunnable 的
+// `chineseDoc === true ? 两者之和 : 0`），留在这里是为了让"7 分怎么来的"可查。
 export const CHINESE_POINTS = { readmeRatio: 4, localizedFile: 3 };
 
-// 判定 README 含中文的字符占比阈值（实测校准：HelloGitHub 5.35% 命中，markitdown 0% 排除）。
+// 判定"有本地化文档/有中文"的字符占比阈值（实测校准：HelloGitHub 5.35% 命中，markitdown 0% 排除）。
+// 注意两条判定用的是同一个阈值、不同的分子：hasCjk 数完整 CJK 类（含假名谚文），
+// hasChinese 只数汉字 —— 见 enrich/readme.mjs 的 detectChinese。
 export const CHINESE_RATIO_THRESHOLD = 0.03;

@@ -70,13 +70,26 @@ export function formatVelocityText(velocity) {
 }
 
 /**
+ * 这个条目有没有"有本地化文档、但不是中文"这条事实（R143）。
+ * 判据取自 runnability.localizedFiles（由 classifyRunnability 从 detectChinese 的 localizedFiles 带出），
+ * 而不是 chineseDoc/hasCjk —— 那两个字段一个已经改成"真有中文"、一个没有随条目走到底，
+ * 而 localizedFiles 是**文件名清单**，本身就是"有非中文本地化文档"的直接证据。
+ * @param {{ localizedFiles?: unknown }} [run]
+ * @returns {boolean}
+ */
+function hasLocalizedDocs(run) {
+  return Array.isArray(run?.localizedFiles) && run.localizedFiles.some((name) => typeof name === 'string' && name !== '');
+}
+
+/**
  * 生成中文上榜理由（最多 5 条），按"最想知道的排最前"排序：
  * 本周新增收藏 → 怎么装 → 有没有中文说明 → 作者还管不管这个项目。
  * 缺字段、空对象、null 都不抛错；拿不到的事实就不写，绝不瞎猜——完全没有证据时返回空数组，
  * 不为了让理由看起来多几条而编造断言（'none' 档同样只能说我们自己的查找动作，绝不替项目下结论，R73）。
  * @param {{ score?: { parts?: object }, repo?: object, velocity?: object, runnability?: object }} [input]
- *   score 来自 scoreRepo（用到 parts 里的 installPath、chinese、pushRecency、license），
- *   runnability 形如 { kind, chineseDoc, verified }，
+ *   score 来自 scoreRepo（用到 parts 里的 installPath、pushRecency、license），
+ *   runnability 形如 { kind, hasChinese, localizedFiles, verified }——中文那一条读**事实**，
+ *   不读 parts.chinese（R143：分数曾经把日韩文档算进来，会把"没有中文"说成"有中文说明"），
  *   repo 形如 { archived, pushedAt, hasRelease90d }——其中 hasRelease90d 是 R40 的三态事实
  *   （true 确认近 90 天发过版 / false 确认没有 / null 没问到），只有 true 才产出"发过新版本"这句（R50）
  * @param {Date} [now] 显式传入"现在"，用于判断 pushedAt 是不是近 7 天；非 Date 则不看时间
@@ -99,9 +112,16 @@ export function buildReasons(input = {}, now = new Date()) {
   const install = installText(run.kind, parts.installPath);
   if (install) reasons.push(install);
 
-  // 3. 有没有中文说明：分数里有中文分就说明有，不必重复传 chineseDoc。
-  if (run.chineseDoc === true || parts.chinese > 0) {
+  // 3. 有没有中文说明。R143：**只读事实，不读分数**，而且必须三态分明——
+  //    parts.chinese > 0 曾经被当成"有中文"的证据，但那一项的历史口径含着日文/韩文（hasCjk），
+  //    于是同一条目会出现"卡片说有中文说明、抽屉 FAQ 说没有找到中文说明"。现在：
+  //      · hasChinese === true            → 有中文说明（计分也按这一条事实算，两层不可能再分叉）；
+  //      · 否则有本地化文档但不是中文      → 如实说清楚，绝不冒充中文；
+  //      · 两者都没有                      → 不提这一条（我们没查到，就不下结论）。
+  if (run.hasChinese === true) {
     reasons.push('有中文说明，照着做不容易卡住');
+  } else if (hasLocalizedDocs(run)) {
+    reasons.push('有本地化文档，但不是中文');
   }
 
   // 4. 作者还管不管这个项目。已归档的项目只给一句诚实结论："仍在更新""最近发过新版本"都与

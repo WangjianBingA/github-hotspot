@@ -1,20 +1,21 @@
 // GitHub 好玩榜 —— README 中文证据采集与判定。
 //
 // 这一层只回答两个事实问题，绝不替调用方打分（分值只从 config/weights.mjs 取，算术在 score.mjs）：
-//   1. 这个仓库有没有"本地化文档"？—— 评分轴要的（scoreRunnable 的中文文档分）。
-//   2. 这个仓库有没有"中文说明"？—— 徽章「🈶 有中文说明」要的（给中文初学者看的承诺）。
+//   1. 这个仓库有没有"中文说明"？—— **计分与徽章都用它**（R143：计分口径从 hasCjk 改成 hasChinese）。
+//   2. 这个仓库有没有"本地化文档（可能是日文/韩文）"？—— 只用于界面上如实说明"有本地化文档（非中文）"。
 //
-// R59：这两个问题的答案**故意不同**，本模块因此产出两个字段，别把它们混用：
-//   · hasCjk  —— **评分的输入**。只要"有本地化文档"就为 true：CJK 占比 ≥ CHINESE_RATIO_THRESHOLD（0.03），
-//     或探测到任意语言的本地化文件（README.ja.md、docs/setup.ko.md 都算，见 R16）。
-//     spec §6.1 的加分规则本来就是奖励"有本地化文档"（任意本地化 +3、CJK 占比达标 +4），不限于中文。
-//   · hasChinese —— **徽章的声明**。必须真的是中文，否则「有中文说明」这句就是对用户的假话：
+// R59 + R143：这两个问题的答案**故意不同**，本模块因此产出两个字段，别把它们混用：
+//   · hasChinese —— **计分与徽章的判据**（R143 起两者统一）。必须真的是中文：
 //       ① 存在**中文文件名**的本地化文件（README.zh-CN.md / README_CN.md / docs/*.zh* 一类）；
 //       ② 或 README 正文由汉字主导：汉字占比达标 **且** 假名占比 < KANA_RATIO_BOUND（0.01）。
 //     日语正文混用汉字与假名，假名占比通常远高于 1%，所以只会命中 ② 的中文不会被误判成日语；
-//     反过来纯日语（假名占比高）拿不到中文徽章，但 hasCjk 仍为 true —— 这正是两者必须分开的原因。
+//     反过来纯日语（假名占比高）拿不到这一分，也拿不到中文徽章。
 //     实测校准：sst/opencode 正文 CJK 占比 0.26%（低于阈值）但仓库有 README.ja.md
-//     → hasCjk: true、hasChinese: false，localizedFiles 如实记下那个 .ja 文件。
+//     → hasChinese: false（**不给分、不给徽章**）、hasCjk: true（"有本地化文档"这条更宽的事实成立），
+//     localizedFiles 如实记下那个 .ja 文件。
+//   · hasCjk —— 只有"有本地化文档"这个更宽的结论：CJK 占比 ≥ CHINESE_RATIO_THRESHOLD（0.03），
+//     或探测到任意语言的本地化文件（README.ja.md、docs/setup.ko.md 都算，见 R16）。
+//     **它不参与计分**，只用来支持「有本地化文档（非中文）」这句如实说明。
 //
 // ratio / kanaRatio 是实测比率，写进返回值供复核：分母一律是**全文的 UTF-16 码元长度**（与 text.length 同口径），
 // 不是"码点数"、也不做任何清洗（不剥 Markdown 标记、不跳代码块）——清洗会引入主观规则并可能把证据洗掉。
@@ -102,6 +103,8 @@ const isChineseFile = (name) => {
  *   两者都可能缺失、为 null、类型不对
  * @returns {{ ratio: number, kanaRatio: number, hasCjk: boolean, hasChinese: boolean, localizedFiles: string[] }}
  *   ratio / kanaRatio：实测比率（分母为全文码元长度，空文本为 0，绝不返回 NaN）；
+ *   hasChinese：**计分与徽章的唯一判据**（R143），真有中文才为 true；
+ *   hasCjk：更宽的"有本地化文档"（含日韩），**不参与计分**，只用于如实说明"非中文"；
  *   localizedFiles：**已排序**的本地化文件名单（含非中文的本地化文件，供界面据实描述徽章）
  */
 export function detectChinese(evidence) {
@@ -132,11 +135,12 @@ export function detectChinese(evidence) {
   localizedFiles.sort();
 
   const hasChineseFile = localizedFiles.some((name) => isChineseFile(name));
-  // hasCjk（评分）：有中文文件名的本地化文件、有任意语言的本地化文件、或 CJK 占比（ratio）达标。
-  const hasCjk = hasChineseFile || localizedFiles.length > 0 || ratio >= CHINESE_RATIO_THRESHOLD;
-  // hasChinese（徽章）：中文文件名，或"汉字占比达标且不是假名主导"的正文。
-  // 这里只数汉字（hanRatio），不用 ratio：纯谚文/纯假名的正文不该拿到中文徽章。
+  // hasChinese（R143：**计分与徽章共用这一条**）：中文文件名，或"汉字占比达标且不是假名主导"的正文。
+  // 这里只数汉字（hanRatio），不用 ratio：纯谚文/纯假名的正文不该拿到中文说明这一项的分。
   const hasChinese = hasChineseFile || (hanRatio >= CHINESE_RATIO_THRESHOLD && kanaRatio < KANA_RATIO_BOUND);
+  // hasCjk（**不参与计分**，R143）：有中文文件名的本地化文件、有任意语言的本地化文件、或 CJK 占比
+  // 达标。它支撑的是界面上那句"有本地化文档（非中文）"。
+  const hasCjk = hasChineseFile || localizedFiles.length > 0 || ratio >= CHINESE_RATIO_THRESHOLD;
 
   return { ratio, kanaRatio, hasCjk, hasChinese, localizedFiles };
 }

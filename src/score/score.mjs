@@ -90,9 +90,12 @@ export function scoreReputation(repo, extra = {}, now = new Date()) {
 }
 
 /**
- * 新手友好分（WEIGHTS.runnable = 25）= 安装路径 0-18 + 中文文档 0-7。
+ * 新手友好分（WEIGHTS.runnable = 25）= 安装路径 0-18 + 中文说明 0-7。
+ * R143：中文那一项按 hasChinese（真有中文）算，**满给或 0**，不按比例；
+ * 只有日文/韩文文档的项目拿不到这 7 分（它至多在界面上看到"有本地化文档（非中文）"）。
  * 名字沿用 v1 的 runnable，界面上叫"新手友好"，不要改名。
- * @param {{ kind?: string, chineseDoc?: boolean }} runnability kind 取自 RUNNABLE_POINTS 的键
+ * @param {{ kind?: string, chineseDoc?: boolean }} runnability kind 取自 RUNNABLE_POINTS 的键；
+ *   chineseDoc 与 hasChinese 恒等（R143），就是"有中文文档"这一位
  * @returns {{ total: number, parts: { installPath: number, chinese: number } }}
  */
 export function scoreRunnable(runnability = {}) {
@@ -144,9 +147,12 @@ export function scoreRepo({ repo, runnability, velocity, extra }, now = new Date
 
 /**
  * 硬性门槛（spec §6.2）：未归档、有许可证、近 7 天有提交、总收藏 ≥200、至少一条已核实的安装路径
- * （kind 必须是 RUNNABLE_POINTS 里分值大于 0 的一档，none 与未知 kind 都算没有）、
- * 不是纯资源清单类（语言为空或只有 Markdown、且没有安装路径证据才判为清单类）。
- * 六条必须同时满足；未通过的原因**全部**按顺序返回，中文、给用户看。
+ * （kind 必须是 RUNNABLE_POINTS 里分值大于 0 的一档，none 与未知 kind 都算没有）。
+ * **独立门槛是这五条**；下面那句"不是纯资源清单类"**不是第六条**——它的判定式本身就要求
+ * "没有任何已核实的安装路径"，而那已经被第五条挡掉了，所以它不会让多一个项目落榜
+ * （R142；boards/build.mjs 的 keep() 也据此不另加过滤器）。它存在的意义是给同一批被挡下的项目
+ * 一个更准确的中文说明（"这是资料清单，不是能装的软件"）。
+ * 未通过的原因**全部**按顺序返回（不短路），中文、给用户看。
  * @param {{ ownerRepo?: string, stars?: number, pushedAt?: string, language?: string|null,
  *   license?: string|{spdx_id?: string}|null, archived?: boolean }} repo
  * @param {{ kind?: string, verified?: boolean }} runnability

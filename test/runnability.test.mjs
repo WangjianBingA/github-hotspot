@@ -4,13 +4,19 @@
 // 除了简报钉住的 8 条，本文件把四类真实缺陷做成回归：
 //   R51 —— 下载地址为空/缺失的 release 资产**不是**安装路径（不给"有东西能下载"的假徽章）；
 //   R48 —— 纯静态网站不知道访客的 Python 版本，绝不编造"兼容"结论，只带要求原文；
-//   R64 —— hasCjk（喂评分）与 hasChinese（徽章）是两个不同的断言，不能互相顶替；
+//   R64 + R143 —— hasChinese（真有中文）与 hasCjk（有本地化文档，含日韩）是两个不同的断言，不能互相顶替；
+//                 R143 起**计分与文案都只认 hasChinese**（日文文档不再拿到中文说明的分），
+//                 hasCjk/localizedFiles 只用于如实说「有本地化文档（非中文）」；
 //   归属（R42）—— repoMatches !== true 的 npm 结果一律忽略，连命令都不产出。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as module from '../src/enrich/runnability.mjs';
 import { classifyRunnability, buildInstallGuide } from '../src/enrich/runnability.mjs';
-import { RUNNABLE_POINTS } from '../src/config/weights.mjs';
+import { detectChinese } from '../src/enrich/readme.mjs';
+import { scoreRepo } from '../src/score/score.mjs';
+import { buildReasons } from '../src/score/reasons.mjs';
+import { CHINESE_POINTS, RUNNABLE_POINTS } from '../src/config/weights.mjs';
+import { DETAIL_WEIGHTS } from '../src/config/weights.mjs';
 
 // ---------- 以下是简报钉住的 8 个用例，原样保留、不做任何削弱 ----------
 
@@ -178,9 +184,11 @@ test('R48：拿不到 Python 版本要求时同样不猜，只说实话', () => 
   assert.doesNotMatch(stringsOf(r).join('\n'), /兼容/);
 });
 
-test('R64：只有非中文本地化文档时，chineseDoc 为 true（喂评分）、hasChinese 为 false（徽章）', () => {
+test('R143：只有非中文本地化文档时，chineseDoc 与 hasChinese 都为 false（不给中文的分、也不给徽章）', () => {
   const r = classifyRunnability({ chinese:{ hasCjk:true, hasChinese:false, localizedFiles:['README.ja.md'] } });
-  assert.equal(r.chineseDoc, true);
+  // R143（修订 R64）：计分口径从 hasCjk 改成 hasChinese —— 这条轴叫「中文说明」，
+  // 只有 README.ja.md 的项目不该拿到中文文档的 7 分，也不该在卡片上挂中文徽章。
+  assert.equal(r.chineseDoc, false);
   assert.equal(r.hasChinese, false);
   assert.deepEqual(r.localizedFiles, ['README.ja.md']);
   assert.ok(r.notes.some(n => n.includes('非中文')));
@@ -193,7 +201,7 @@ test('R64：向导说的是「有本地化文档（非中文）」，一个字�
   assert.doesNotMatch(text, /有中文说明/);
 });
 
-test('R64：真有中文时，评分输入与徽章结论都给肯定，也不说"非中文"', () => {
+test('R64：真有中文时，chineseDoc 与 hasChinese 都给肯定，也不说"非中文"', () => {
   const r = classifyRunnability({ chinese:{ hasCjk:true, hasChinese:true, localizedFiles:['README.zh-CN.md'] } });
   assert.equal(r.chineseDoc, true);
   assert.equal(r.hasChinese, true);
@@ -295,6 +303,96 @@ test('R68：PyPI 归属不成立不影响优先级更高的路径（有安装包
   assert.equal(r.kind, 'releaseWindows');
   assert.equal(r.downloadUrl, 'https://x/a.exe');
   assert.ok(r.notes.some(n => n.includes('没能确认它确实属于这个项目')));
+});
+
+// R143 的**端到端**鉴别用例：从 README 文本一路走到分数，证明"中文说明"这 7 分
+// 不会被日文/韩文文档拿到。这是这条修复真正的验收面——只断言 classifyRunnability 的字段
+// 还不够，必须有"分数里那一项真的是 0"这一条。
+test('R143：日文/韩文文档拿不到中文说明的分（从 README 文本到分数的一条链）', () => {
+  const now = new Date('2026-10-10T00:00:00Z');
+  const baseRepo = {
+    ownerRepo: 'sst/opencode', stars: 9000, forks: 900, pushedAt: '2026-10-09T00:00:00Z',
+    license: 'MIT', hasRelease90d: true,
+  };
+  const cases = [
+    {
+      label: '只有 README.ja.md 的英文仓库（sst/opencode 的真实形状）',
+      evidence: { readmeText: 'OpenCode is an AI coding agent. '.repeat(50), extraFiles: { 'README.ja.md': '# OpenCode 日本語' } },
+      expectHasChinese: false,
+    },
+    {
+      label: '韩文正文（谚文在 CJK 类里，ratio 会达标）',
+      evidence: { readmeText: '이것은 매우 유용한 도구입니다. 파일을 처리할 수 있습니다. '.repeat(20), extraFiles: {} },
+      expectHasChinese: false,
+    },
+    {
+      label: '日语正文（假名占比高）',
+      evidence: { readmeText: 'これはとても便利なツールです。ファイルを処理できます。'.repeat(20), extraFiles: {} },
+      expectHasChinese: false,
+    },
+    {
+      label: '真有中文（正文以汉字为主）',
+      evidence: { readmeText: '这是一个很好用的工具，可以帮你处理文件。'.repeat(20), extraFiles: {} },
+      expectHasChinese: true,
+    },
+    {
+      label: '中文文件名的本地化文件（正文是英文也算）',
+      evidence: { readmeText: 'English only. '.repeat(50), extraFiles: { 'README.zh-CN.md': '中文内容' } },
+      expectHasChinese: true,
+    },
+  ];
+
+  for (const { label, evidence, expectHasChinese } of cases) {
+    const facts = detectChinese(evidence);
+    assert.equal(facts.hasChinese, expectHasChinese, `${label}：hasChinese`);
+    // 非中文的那三种，hasCjk 必须是 true —— 否则下面那条断言就退化成了"什么都没测"。
+    if (!expectHasChinese) assert.equal(facts.hasCjk, true, `${label}：这条用例的前提是 hasCjk 为 true`);
+
+    const runnability = classifyRunnability({
+      releases: { windowsAsset: { name: 'a.exe', url: 'https://x/a.exe' } },
+      chinese: facts,
+    });
+    const score = scoreRepo({ repo: baseRepo, runnability, velocity: { gained7d: 100, confidence: 'measured' }, extra: { growing: true } }, now);
+    const chinesePoints = CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile;
+    assert.equal(score.parts.installPath, RUNNABLE_POINTS.releaseWindows, `${label}：安装路径分`);
+    assert.equal(score.parts.chinese, expectHasChinese ? chinesePoints : 0, `${label}：中文说明那一项的分`);
+
+    // 文案三层必须同口径：理由、向导 FAQ、卡片用的徽章判据都读同一个事实。
+    const reasons = buildReasons({ score, repo: baseRepo, velocity: { gained7d: 100, confidence: 'measured' }, runnability }, now);
+    const guideText = JSON.stringify(buildInstallGuide(runnability));
+    if (expectHasChinese) {
+      assert.ok(reasons.some((r) => r.includes('有中文说明')), `${label}：理由应当说"有中文说明"：${JSON.stringify(reasons)}`);
+      assert.match(guideText, /有中文说明/, `${label}：向导应当说"有中文说明"`);
+    } else {
+      assert.ok(!reasons.some((r) => r.includes('有中文说明')), `${label}：理由不该说"有中文说明"：${JSON.stringify(reasons)}`);
+      assert.ok(!/有中文说明/.test(guideText), `${label}：向导不该说"有中文说明"`);
+      // 有非中文本地化文件时，理由与向导都要如实说"非中文"。
+      if (facts.localizedFiles.length > 0) {
+        assert.ok(reasons.includes('有本地化文档，但不是中文'), `${label}：理由应当如实说非中文：${JSON.stringify(reasons)}`);
+        assert.match(guideText, /非中文/, `${label}：向导应当如实说非中文`);
+      }
+    }
+  }
+});
+
+test('R143：日文的 runnability 与中文的 runnability 分差正好是中文那一项', () => {
+  // 把两边的差别钉成"就是中文说明那 7 分"，避免以后有人用别的方式把分补回来。
+  const now = new Date('2026-10-10T00:00:00Z');
+  const repo = { ownerRepo: 'a/b', stars: 9000, forks: 900, pushedAt: '2026-10-09T00:00:00Z', license: 'MIT', hasRelease90d: true };
+  const make = (chinese) => scoreRepo({
+    repo,
+    runnability: classifyRunnability({ releases: { windowsAsset: { name: 'a.exe', url: 'https://x/a.exe' } }, chinese }),
+    velocity: { gained7d: 100, confidence: 'measured' },
+    extra: { growing: true },
+  }, now);
+  const ja = make({ hasCjk: true, hasChinese: false, localizedFiles: ['README.ja.md'] });
+  const zh = make({ hasCjk: true, hasChinese: true, localizedFiles: ['README.zh-CN.md'] });
+  assert.equal(zh.parts.chinese - ja.parts.chinese, CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile);
+  assert.equal(zh.parts.chinese - ja.parts.chinese, CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile);
+  // 口碑轴不受影响（同一份 repo 事实），所以总分差也正好是那一项。
+  assert.equal(zh.total - ja.total, CHINESE_POINTS.readmeRatio + CHINESE_POINTS.localizedFile);
+  // 前提检查：分数真的算出来了（否则上面的差可能是 0 - 0）。
+  assert.ok(ja.parts.chinese + ja.parts.installPath + DETAIL_WEIGHTS.forkRatio > 0, '这条断言的前提是分数真的算出来了');
 });
 
 test('chinese 整个缺失时两个中文结论都为 false，localizedFiles 为空数组', () => {

@@ -22,9 +22,10 @@
 //          PyPI 包存在且归属成立是一条独立于访客机器的证据，所以照给 pypiCompatible（🟡、14 分），
 //          但只带**要求原文**（requiresPython），让向导说"需要 Python >=3.10"而不是"你可以装"。
 //          绝不用 registry.mjs 的 isPythonCompatible() 去伪造一个"兼容"。
-//   R64 —— hasCjk（有本地化文档，喂评分）与 hasChinese（真有中文，管徽章）是两个不同的断言：
-//          chineseDoc 只认 hasCjk；hasChinese 与 localizedFiles 照实带出去，
-//          只有非中文本地化时界面必须说「有本地化文档（非中文）」，不能说"有中文说明"。
+//   R64 + R143 —— hasChinese（真有汉字）与 hasCjk（有本地化文档，含日韩）是两个不同的断言：
+//          **计分与文案都只认 hasChinese**（这条轴叫「中文说明」，日文文档不该拿到中文的分）；
+//          hasCjk 与 localizedFiles 是"有本地化文档"这个更宽的信号，
+//          只用于在界面上如实说「有本地化文档（非中文）」。详见 classifyRunnability 里的取值处。
 //   R68 —— npm 与 PyPI 的**归属都是硬前提**。Task 10B 之后 lookupPyPI 与 lookupNpm 一样返回
 //          repoMatches / evidence（取证来自 PyPI 自己声明的 project_urls / home_page），但硬前置不变：
 //          只有在拿到 repoMatches === true 时才下发 pip install（宁可不给命令，R45 的方向）。
@@ -64,10 +65,12 @@ const npmEvidence = (npm) => (isNonEmpty(npm.evidence) ? npm.evidence.trim() : '
  *   npm：lookupNpm 的结果，用到 packageName / repoMatches / hasBin / osIncludesWin / evidence；
  *   pypi：lookupPyPI 的结果，用到 packageName / version / requiresPython，以及 Task 10B 已补上的
  *     repoMatches / evidence（'project_urls' | 'home_page' | 'none'；PyPI 归属也是硬前提，R68）；
- *   chinese：detectChinese 的结果，用到 hasCjk（喂评分）/ hasChinese（徽章）/ localizedFiles
+ *   chinese：detectChinese 的结果，用到 hasChinese（**计分与文案都认它**，R143）/
+ *     hasCjk（更宽的"有本地化文档"信号，只用于 notes 里如实说明）/ localizedFiles
  * @returns {{ kind: string, command: string|null, downloadUrl: string|null, evidence: string|null,
  *   verified: boolean, difficulty: 'green'|'yellow'|'red', chineseDoc: boolean, hasChinese: boolean,
  *   localizedFiles: string[], requiresPython: string|null, notes: string[] }}
+ *   chineseDoc 与 hasChinese 恒等（R143）：前者是历史字段名，两者都表示"真有中文文档"。
  */
 export function classifyRunnability(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
@@ -76,8 +79,11 @@ export function classifyRunnability(input = {}) {
   const pypi = source.pypi && typeof source.pypi === 'object' ? source.pypi : null;
   const chinese = source.chinese && typeof source.chinese === 'object' ? source.chinese : null;
 
-  // R64：两个中文结论分开取，绝不互相顶替。chineseDoc 只认 hasCjk（评分口径是"有本地化文档"），
-  // hasChinese 只用于界面徽章「有中文说明」。
+  // R143：计分口径从 hasCjk 改成 hasChinese。这条轴、口径页、README、手册都把它叫「中文说明」，
+  // 而 hasCjk 里含着假名与谚文——只有 README.ja.md 的项目会因此白拿 7 分（实测 sst/opencode 就是这种形状），
+  // 同时卡片说"有中文说明"、抽屉 FAQ 说"没有找到中文说明"，同一条目自相矛盾。
+  // 现在：chineseDoc === hasChinese，字段名也就诚实了（chineseDoc 就是"有中文文档"）。
+  // hasCjk 仍然保留，但只用于在 notes 里如实说明"有本地化文档，但不是中文"。
   const hasCjk = chinese?.hasCjk === true;
   const hasChinese = chinese?.hasChinese === true;
   const localizedFiles = Array.isArray(chinese?.localizedFiles)
@@ -103,7 +109,7 @@ export function classifyRunnability(input = {}) {
     evidence: null,
     verified: true,
     difficulty: calculateGrade(RUNNABLE_POINTS[kind]),
-    chineseDoc: hasCjk,
+    chineseDoc: hasChinese,
     hasChinese,
     localizedFiles: [...localizedFiles],
     requiresPython: null,
@@ -233,14 +239,28 @@ export function buildInstallGuide(runnability = {}) {
   // 命令里"包名"那一段：第 2 步给整行命令，第 3 步与卸载说明只要名字。
   const target = command === null ? null : command.replace(/^(?:npx|npm install|pip install)\s+/, '');
 
+  // R143：这里只读 hasChinese 一个事实，不再读 chineseDoc —— 两个字段恒等之后，
+  // 再同时读它们只会让"谁说了算"重新变得含糊（而且手写数据可能只给其中一个）。
+  const hasChinese = run.hasChinese === true;
   return {
     steps: [
       { title: '第 1 步 · 你需要先准备什么', body: prepareText(kind, requiresPython) },
       installStep(kind, command, downloadUrl),
       { title: '第 3 步 · 怎么用', body: usageText(kind, target) },
     ],
-    faq: faqItems(kind, target, { hasChinese: run.hasChinese === true, chineseDoc: run.chineseDoc === true }),
+    faq: faqItems(kind, target, { hasChinese, hasLocalized: hasCjkFact(run) }),
   };
+}
+
+/**
+ * 这份 runnability 有没有"本地化文档但不是中文"这条事实。
+ * 两个来源都要认：classifyRunnability 会把 localizedFiles 带出来（R143 之后它仍然照实带着），
+ * 手写数据里也可能只给了 localizedFiles。取"有没有非空文件名"作为判据。
+ * @param {object} run runnability 对象
+ * @returns {boolean}
+ */
+function hasCjkFact(run) {
+  return Array.isArray(run?.localizedFiles) && run.localizedFiles.some((name) => isNonEmpty(name));
 }
 
 /**
@@ -379,17 +399,17 @@ function uninstallText(kind, target) {
 }
 
 /**
- * "它有中文文档吗"的答案。R64：只有非中文本地化时如实说「有本地化文档（非中文）」，
- * 绝不说"有中文说明"——那会是一句假话。
- * @param {boolean} hasChinese 真有中文（徽章口径）
- * @param {boolean} chineseDoc 有本地化文档（评分口径）
+ * "它有中文文档吗"的答案。R64 + R143：只有非中文本地化时如实说「有本地化文档（非中文）」，
+ * 绝不说"有中文说明"——那会是一句假话（而且现在计分也按同一条事实算，卡片与 FAQ 不会再各说各话）。
+ * @param {boolean} hasChinese 真有中文（唯一的判据）
+ * @param {boolean} hasLocalized 有本地化文档但不是中文
  * @returns {string}
  */
-function chineseAnswer(hasChinese, chineseDoc) {
+function chineseAnswer(hasChinese, hasLocalized) {
   if (hasChinese) return '有中文说明，项目里带了中文文档；遇到看不懂的地方直接看中文那份就行。';
   // R71：上游区分不了"读过且只有英文"与"README 根本没拿到"（detectChinese 对两者都返回全 false），
   // 所以这里只能说我们自己的查找动作："没有查到中文说明"在两种情况下都是真的。
-  if (chineseDoc) return '我们没有找到中文说明；它有本地化文档（非中文），所以界面上不会显示中文徽章，这是实话。内容可以先看英文那份，需要的时候用翻译工具。';
+  if (hasLocalized) return '我们没有找到中文说明；它有本地化文档（非中文），所以界面上不会显示中文徽章，这是实话。内容可以先看英文那份，需要的时候用翻译工具。';
   return '我们没有查到中文说明。碰到看不懂的段落，整段复制到翻译工具或 AI 助手里，让它翻译成大白话。';
 }
 
@@ -397,15 +417,15 @@ function chineseAnswer(hasChinese, chineseDoc) {
  * 常见问题（恒定 5 条，覆盖"怎么卸载 / 命令行在哪 / 报错怎么办 / 要不要花钱 / 有没有中文"）。
  * @param {string} kind RUNNABLE_POINTS 的键
  * @param {string|null} target 命令里的包名
- * @param {{ hasChinese: boolean, chineseDoc: boolean }} chinese 两个中文结论（R64）
+ * @param {{ hasChinese: boolean, hasLocalized: boolean }} chinese 两个中文事实（R143）
  * @returns {{ q: string, a: string }[]}
  */
-function faqItems(kind, target, { hasChinese, chineseDoc }) {
+function faqItems(kind, target, { hasChinese, hasLocalized }) {
   return [
     { q: '装错了、不想要了，怎么卸载？', a: uninstallText(kind, target) },
     { q: '「命令行」是什么？在哪里打开？', a: '按键盘上的 Windows 键，输入 cmd 或 PowerShell，回车就弹出那个黑色窗口。命令要粘到黑窗口里，不是粘到搜索框里。第一次用可以先看「新手准备页」。' },
     { q: '装的时候跳出一堆红字，或者问我要不要允许，怎么办？', a: '先把整段红字复制下来，连同项目名字一起粘到搜索引擎或 AI 助手里问清楚；没看懂之前，不要一路点"允许"。' },
     { q: '这些东西要花钱吗？会不会有毒？', a: '都是公开源代码的项目，从上面给的官方地址下载一般没问题。别在别的网站下载安装包，也不要为了装它去付钱。' },
-    { q: '它有中文文档吗？', a: chineseAnswer(hasChinese, chineseDoc) },
+    { q: '它有中文文档吗？', a: chineseAnswer(hasChinese, hasLocalized) },
   ];
 }

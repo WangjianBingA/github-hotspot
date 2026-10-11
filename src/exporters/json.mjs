@@ -41,10 +41,11 @@ function toItem(ranked) {
     // R48：这里只有**要求原文**，没有、也永远不会有"兼容性结论"——
     // 静态网站看不到访客电脑上装的是哪个版本，编一个 compatible: true 就是假话。
     requiresPython: runnability.requiresPython ?? null,
-    // R64：chineseDoc=有本地化文档（计分口径），hasChinese=真有中文（徽章口径），两者不得混用。
+    // R64 + R143：这两个字段现在恒等（都是"真有中文文档"），保留两个名字只是因为
+    // chineseDoc 是历史字段名、hasChinese 是界面用的名字。**计分与文案都认 hasChinese**，
+    // 日文/韩文文档不再算作中文（详见 enrich/runnability.mjs 的取值处）。
     chineseDoc: runnability.chineseDoc === true,
     hasChinese: runnability.hasChinese === true,
-    localizedFiles: Array.isArray(runnability.localizedFiles) ? runnability.localizedFiles : [],
     notes: Array.isArray(runnability.notes) ? runnability.notes : [],
     steps: guide.steps,
     faq: guide.faq,
@@ -75,11 +76,17 @@ function toItem(ranked) {
     grade: ranked.grade ?? null,
     chineseDoc: runnability.chineseDoc === true,
     hasChinese: runnability.hasChinese === true,
+    // R144：本地化文件名清单**只在这一处（顶层）出现**，是它唯一的事实来源。
+    // 以前它同时写在 install 里，而界面读的是顶层那一份 → 徽章「有本地化文档（非中文）」
+    // 在生产上永远渲染不出来（测试之所以绿，是因为用例喂的是手写形状）。
+    localizedFiles: Array.isArray(runnability.localizedFiles) ? runnability.localizedFiles : [],
     install,
     reasons: Array.isArray(ranked.reasons) ? ranked.reasons : [],
     pushedAt: repo.pushedAt ?? null,
     archived: repo.archived === true,
-    // R41 的两个三态事实照实带出去（界面的"数据可信度"要用）。
+    // R41 的两个三态事实照实带出去。**它们目前没有任何界面消费者**（R150/M2 核实过：
+    // public/ 全量 grep 为 0），带出去是为了让"我们问到了什么"可追溯、以及让数据层与
+    // 后续的分析/脚本能直接读——不是给页面显示用的，别照着一句旧注释去找界面上的用法。
     hasRelease90d: repo.hasRelease90d === true || repo.hasRelease90d === false ? repo.hasRelease90d : null,
     growing: ranked.extra?.growing === true || ranked.extra?.growing === false ? ranked.extra.growing : null,
     // 溯源证据：顶层字段是界面契约，这三个对象是"这个结论是怎么来的"。

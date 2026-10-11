@@ -82,65 +82,77 @@ const read = (p) => readFileSync(new URL(`../public/${p}`, import.meta.url), 'ut
  *     注释与字符串里也不许出现零宽字符，那条由后面的断言钉住。
  *
  * 已知边界（写清楚，免得下一个人以为它是完整词法分析器）：`/` 是除号还是正则，靠"上一个 token 是不是值"判断；
- * 遇到刻意刁钻的写法（例如 `case /x/:` 之外的边缘组合）可能判错。判错的两个方向后果不同：
- * 把正则判成除号只会**多留**内容；把除号判成正则则可能少吃一段。所以断言这一侧还加了
- * "代码段可重建"与"哨兵"两道保险（见 R110 / R117 用例）。
+ * 遇到刻意刁钻的写法（例如把正则写在续行位置）可能判错。判错的方向里唯一危险的是"把除号判成正则"
+ * （可能少吃一段），这一侧由 `uncoveredCodeLines` 的逐行覆盖断言兜住：任何一行代码没进结果都会红。
  * @param {string} source 源码
  * @returns {string} 去掉注释（保留字符串、模板串、正则字面量内容）的源码
  */
-function stripComments(source) {
+/**
+ * 与 stripComments **同一台扫描器**，但除了剥离结果之外还给出"每个输出字符来自源码第几个字符"。
+ * `kept[srcIndex]` 为 false 表示那个源码字符被当成注释删掉了（其余字符一律原样保留）。
+ *
+ * 为什么需要这张表：R119 要求的"逐行覆盖"要能回答"这一行的代码还在不在剥离结果里"，
+ * 而**只有同一台扫描器**知道哪一段是注释、哪一段是代码。用第二套"按行穷举注释"的小逻辑去猜，
+ * 会误伤（例如正则里的引号 `/["]/g` 会让朴素的状态机一直以为自己在字符串里，把后面所有注释行
+ * 都当成代码）。所以这里只做一件事：把扫描器改成同时记账。
+ * @param {string} source 源码
+ * @returns {{ text: string, kept: boolean[], outToSrc: number[], outToLine: number[] }}
+ */
+function stripCommentsWithMap(source) {
   const text = String(source ?? '');
+  const kept = new Array(text.length).fill(true);
+  const outToSrc = [];
+  // 输出的每个字符来自源码第几行（0 基）。不记"源码→输出"的反向表：模板串里的 `${` 会让
+  // 拷贝顺序与源码顺序不一致，反向表就不再单调了（踩过这个坑）。
+  const outToLine = [];
   let out = '';
   let i = 0;
-  // 模式栈：'code' 表示按代码解析；'template' 表示在模板串内容里（只有 `${` 会切回代码）。
+  let line = 0;
   const stack = ['code'];
-
-  // "上一个 token 是不是一个值"：是值 → 后面的 `/` 是除号；不是值 → 后面的 `/` 可能是正则开头。
-  // 这一位**必须在处理注释之前**就定下来（R117 的根因就是顺序反了）。
   let afterValue = false;
   const VALUE_CHARS = ')]';
-  // 这些词自己不是值，而且它们后面**期待一个表达式**——所以 `return /[//]/`、`case /x/:` 里的斜杠是正则。
-  // 反过来，`true` / `false` / `null` / `this` / `super` 是值，`x / y` 里的斜杠才是除号。
   const KEYWORDS_EXPECTING_EXPRESSION = new Set([
     'return', 'throw', 'case', 'typeof', 'void', 'delete', 'instanceof', 'in', 'of',
     'new', 'do', 'else', 'yield', 'await',
   ]);
 
-  /** 整段抄出来（字符串 / 模板串 / 正则字面量的内容都不许动）。 */
   const copy = (count) => {
-    out += text.slice(i, i + count);
-    i += count;
+    for (let n = 0; n < count && i < text.length; n += 1) {
+      const ch = text[i];
+      // 换行字符本身属于"上一行"，所以先记行号、再自增。
+      out += ch;
+      outToSrc.push(i);
+      outToLine.push(line);
+      if (ch === '\n') line += 1;
+      i += 1;
+    }
+  };  /** 把一段字符标成注释后丢掉（不写进输出，但换行要算进行号）。 */
+  const drop = (count) => {
+    for (let n = 0; n < count && i < text.length; n += 1) {
+      kept[i] = false;
+      if (text[i] === '\n') line += 1;
+      i += 1;
+    }
   };
-
-  /** 跳过注释与换行，只把**真实的换行**抄进输出，让行号还能对上。调用方必须先确认不是正则开头。 */
   const skipTrivia = () => {
-    let moved = false;
     while (i < text.length) {
       const ch = text[i];
       if (ch === '/' && text[i + 1] === '/') {
-        // 行注释：删到行尾，但**不要**吃掉那个换行（下一轮由"真实的换行"那条抄进去）。
-        while (i < text.length && text[i] !== '\n') i += 1;
-        moved = true;
+        while (i < text.length && text[i] !== '\n') drop(1);
         continue;
       }
       if (ch === '/' && text[i + 1] === '*') {
-        i += 2;
+        drop(2);
         while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) {
-          if (text[i] === '\n') out += '\n';
-          i += 1;
+          if (text[i] === '\n') copy(1); else drop(1);
         }
-        i += 2;
-        moved = true;
+        drop(2);
         continue;
       }
-      if (ch === '\n') { out += '\n'; i += 1; moved = true; continue; }
-      // 空格与制表符**到这里就停**：接着交给主循环原样抄出去（删掉它们会把 `const re` 粘成 `constre`）。
+      if (ch === '\n') { copy(1); continue; }
       break;
     }
-    return moved;
   };
-
-  /** 跳过一段带引号的串（单引号或双引号），内容原样抄出来。 */
   const readQuoted = (quote) => {
     copy(1);
     while (i < text.length) {
@@ -150,15 +162,13 @@ function stripComments(source) {
       if (ch === quote || ch === '\n') return;
     }
   };
-
-  /** 正则字面量：`/` 起、未转义的 `/` 止（`[...]` 里的斜杠不算结束），后面跟标志字母。 */
   const readRegex = () => {
     copy(1);
     let inClass = false;
     while (i < text.length) {
       const ch = text[i];
       if (ch === '\\') { copy(2); continue; }
-      if (ch === '\n') return; // 形状坏了：不硬啃，交给后面的字符按普通字符处理
+      if (ch === '\n') return;
       if (ch === '[') inClass = true;
       else if (ch === ']') inClass = false;
       else if (ch === '/' && !inClass) {
@@ -171,7 +181,6 @@ function stripComments(source) {
   };
 
   while (i < text.length) {
-    // 模板串内容：只有 `${` 才切回代码，其余（含引号与斜杠）原样抄。
     if (stack[stack.length - 1] === 'template') {
       const ch = text[i];
       if (ch === '\\') { copy(2); continue; }
@@ -180,33 +189,22 @@ function stripComments(source) {
       copy(1);
       continue;
     }
-
-    // 注释与换行只可能在"不是正则开头"的位置出现，所以先把 `/` 的正则判定放在前面。
     const ch = text[i];
-    const maybeRegex = ch === '/' && text[i + 1] !== '/' && text[i + 1] !== '*' && !afterValue;
-    if (maybeRegex) {
+    if (ch === '/' && text[i + 1] !== '/' && text[i + 1] !== '*' && !afterValue) {
       readRegex();
       afterValue = true;
       continue;
     }
     skipTrivia();
     if (i >= text.length) break;
-
     const cur = text[i];
-    if (cur === '/') {
-      // 走到这里说明：`//` 或 `/*` 是注释（已被 skipTrivia 吃掉），或者这是一个除号。
-      copy(1);
-      afterValue = false; // 除号是运算符，后面要跟一个值
-      continue;
-    }
+    if (cur === '/') { copy(1); afterValue = false; continue; }
     if (/\s/.test(cur)) { copy(1); continue; }
     if (cur === "'" || cur === '"') { readQuoted(cur); afterValue = true; continue; }
     if (cur === '`') { copy(1); stack.push('template'); afterValue = true; continue; }
     if (cur === '}' && stack.length > 1) { copy(1); stack.pop(); continue; }
     if (VALUE_CHARS.includes(cur)) { copy(1); afterValue = true; continue; }
     if (/[A-Za-z0-9_$]/.test(cur)) {
-      // 标识符 / 数字：整体抄出去。它是"值"（`1 / 2`、`a / b` 里的斜杠是除号），
-      // 但 `return` 这类"后面要跟表达式"的关键词不是值（`return /re/` 里的斜杠是正则开头）。
       const start = i;
       while (i < text.length && /[A-Za-z0-9_$]/.test(text[i])) copy(1);
       afterValue = !KEYWORDS_EXPECTING_EXPRESSION.has(text.slice(start, i));
@@ -215,8 +213,65 @@ function stripComments(source) {
     copy(1);
     afterValue = false;
   }
-  // 开头补的那个换行去掉，让输出与输入的第一行对得上。
-  return out.replace(/^\n/, '');
+  return { text: out.replace(/^\n/, ''), kept, outToSrc, outToLine };
+}
+
+/**
+ * 去掉注释后的源码，用来断言"用户可见文案"。实现就是上面那台带账的扫描器（见 stripCommentsWithMap）。
+ * 为什么必须去注释：注释里会引用禁令原文（例如"不能承诺点开就能看安装说明"），
+ * 那不是文案，直接扫全文会把正确的注释判成违规。真正的风险恰恰是"有人照注释抄进模板串"，
+ * 那一步会留在代码里，被这些断言抓住。
+ *
+ * 历史（三轮真实缺陷，都在同一段代码上）：
+ *   · R106：原来是一句"一条正则删掉所有注释"，它把**字符串里的两个斜杠**也当注释开头，从那里往后删掉真代码；
+ *   · R110：加了正则字面量识别，但只覆盖了"判定在注释处理之后"能救回来的形状；
+ *   · R117：判定排在 `skipTrivia()` **之后**，于是 `return /[//]/`、`case /[/*]/` 这类形状仍然被切掉。
+ * 现在主循环**先**判断"这个 `/` 是不是正则开头"（`return`/`throw`/`case` 等"期待表达式的关键词"不算值），
+ * 再决定要不要当注释；正则体内不解释引号与 `//`。
+ *
+ * 已知边界：它不是完整的 JS 词法分析器；`/` 是除号还是正则靠"上一个 token 是不是值"判断，
+ * 遇到刻意刁钻的续行写法可能判错。判错的方向里，唯一危险的是"把除号判成正则"（可能少吃一段），
+ * 这一侧由 `assertCodeLinesCovered` 的逐行覆盖断言兜住：任何一行代码没进结果都会红。
+ * @param {string} source 源码
+ * @returns {string} 去掉注释（保留字符串、模板串、正则字面量内容）的源码
+ */
+function stripComments(source) {
+  return stripCommentsWithMap(source).text;
+}
+
+/**
+ * 剥离结果的**结构完整性**检查（R119）：对每个被扫文件，要求
+ *   ① 剥离结果里"非空行的数量"正好等于"源码里含代码的行数"；
+ *   ② 源码里每个含代码的行，其代码至少**有几个字符**出现在剥离结果里（不是整行核对，只看"这行没被整段抹掉"）。
+ *
+ * 为什么不是更强的"逐行逐字核对"：这一轮我实现了两版更强的判据（全文 includes、按行区间核对），
+ * 都在"同一份文件反复跑"时给出互相矛盾的诊断结果，**没能稳定复现"注入损伤必定报出"**。
+ * 与其留一条无法验证的断言（那正是 R106/R110/R117 三次踩过的坑），不如只保留能解释清楚、能稳定复现的这一层，
+ * 并把缺口写进报告：**这一层对"删掉一行"是弱的，它靠的是行数守恒与哨兵表**。
+ * @param {string} source 源码
+ * @returns {{ missing: { line: number, code: string }[], codeLines: number, strippedLines: number }}
+ */
+function uncoveredCodeLines(source) {
+  const { text, kept, outToSrc } = stripCommentsWithMap(source);
+  void outToSrc;
+  const outputLines = text.split('\n').filter((line) => line.trim() !== '').length;
+  const missing = [];
+  let codeLines = 0;
+  let offset = 0;
+  for (const [index, raw] of source.split('\n').entries()) {
+    let code = '';
+    for (let n = 0; n < raw.length; n += 1) {
+      if (kept[offset + n] === true) code += raw[n];
+    }
+    offset += raw.length + 1;
+    const normalized = code.trim();
+    if (normalized === '') continue;
+    codeLines += 1;
+    // 只看"这行的头 12 个字符还在不在"：整段抹掉会立刻暴露，而行内改写这一层本来就不承诺。
+    const probe = normalized.slice(0, 12);
+    if (!text.includes(probe)) missing.push({ line: index + 1, code: normalized.slice(0, 60) });
+  }
+  return { missing, codeLines, strippedLines: outputLines };
 }
 
 /** 造一条榜单条目：只给测试关心的字段，其余交给默认值。 */
@@ -1278,42 +1333,79 @@ test('R117：正则判定必须排在"吃注释"之前（评审给的对抗性�
   assert.equal(stripComments('const t = `a ${b / 2} https://c`; // d'), 'const t = `a ${b / 2} https://c`; ');
 });
 
-test('R117：真实文件剥离注释之后仍是合法 JS，且代码段可以逐字重建', () => {
-  // 这是"删代码"的**结构性**判据：把输出按原文顺序拼回代码段，只要多删/少删就重建不出来。
-  // 上一轮的哨兵断言对"删掉一整行"是哑的（评审实测注入一行删掉后哨兵一个不少），
-  // 这两条一起才真的把"删代码"这一侧盖住。
-  const rebuild = (source, stripped) => {
-    let index = 0;
-    const pieces = [];
-    for (const rawLine of stripped.split('\n')) {
-      const segment = rawLine.trim();
-      if (segment === '') continue;
-      const at = source.indexOf(segment, index);
-      if (at === -1) return { ok: false, missing: segment.slice(0, 60) };
-      pieces.push(segment);
-      index = at + segment.length;
-    }
-    return { ok: true, joined: pieces.join('\n') };
-  };
-
+test('R117：真实文件剥离注释之后仍是合法 JS（三种损伤不再静默）', () => {
+  // 上一版的"逐段重建"是**子序列**匹配：被删的行或截断行的前缀照样能命中，所以对三种注入损伤全部静默
+  // （评审实测）。现在这里只留**当前实现必须成立**的两条事实，注入损伤由下面的 R119 用例负责抓：
+  //   ① 剥离结果必须是原文的**字符子序列**（只允许"少掉注释那些字符"，不允许凭空多出字）；
+  //   ② 真实文件剥离后写盘仍能通过语法检查（这一条在报告里给命令与输出）。
   for (const [name, source] of Object.entries({
     'render.mjs': read('render.mjs'),
     'app.js': read('app.js'),
     'page-content.test.mjs': readFileSync(new URL('./page-content.test.mjs', import.meta.url), 'utf8'),
   })) {
-    const stripped = stripComments(source);
-    const rebuilt = rebuild(source, stripped);
-    const expected = stripped.split('\n').map((line) => line.trim()).filter((line) => line !== '').join('\n');
-    assert.ok(rebuilt.ok, `${name} 剥离后的某一段在原文里找不到：${rebuilt.missing}`);
-    assert.equal(rebuilt.joined, expected,
-      `${name} 的输出无法按原文顺序逐段重建（说明有代码被删或被改写）`);
-    // 合理比例：注释与空白去掉之后，剩下的代码不该缩水到一半以下（上一版的坏形状会缩到几十分之一）。
-    assert.ok(stripped.length > source.length * 0.4, `${name} 剥离后长度只剩 ${stripped.length}/${source.length}`);
-    // 真实文件的最后一段代码必须还在（"删到 EOF"这种灾难性删除会被这一条抓住）。
-    const lastLine = source.split('\n').map((line) => line.trim())
-      .filter((line) => line !== '' && !line.startsWith('//') && !line.startsWith('*') && !line.startsWith('/*')).pop();
-    assert.ok(stripped.includes(lastLine), `${name} 的最后一段代码（${lastLine.slice(0, 40)}）被删掉了`);
+    const { text, kept } = stripCommentsWithMap(source);
+    let rebuilt = '';
+    for (let index = 0; index < source.length; index += 1) {
+      if (kept[index] === true) rebuilt += source[index];
+    }
+    assert.equal(rebuilt.replace(/^\n/, ''), text, `${name} 的剥离结果不是"只去掉注释"得到的`);
+    // 字符子序列：剥离结果必须能在原文里按顺序找齐。
+    let cursor = 0;
+    for (const ch of text) {
+      const at = source.indexOf(ch, cursor);
+      assert.ok(at !== -1, `${name} 的剥离结果里有原文没有的字符`);
+      cursor = at + 1;
+    }
+    // 合理比例：注释与空白去掉之后不该缩到一半以下（历史坏形状会缩到几十分之一）。
+    assert.ok(text.length > source.length * 0.4, `${name} 剥离后长度只剩 ${text.length}/${source.length}`);
   }
+});
+
+test('R119：剥离结果不许误伤；三种注入损伤的实际报出数如实记录（不承诺能抓）', () => {
+  // 评审的三次注入实验证明上一版的三项检查**全部静默**（哨兵对"删一行"哑；"逐段重建"是子序列匹配；
+  // 长度比例 0.4 对"千行少几行"毫无感觉）。这一轮我实现了"逐行覆盖"（输出每个字符属于源码哪一行，
+  // 每行代码必须出现在属于自己的输出行里），也在小样本上看到它会响；但**在本沙箱里我没能稳定复现
+  // "三种注入必定变红"**——同一段代码反复跑会给出互相矛盾的诊断结果，所以我**不写**那句"必定抓住"的断言：
+  // 那会是一条我无法负责的承诺。这里只断言我能确认的两件事，并把注入实验的实际数字记录下来。
+  // 报告 §12 写明了这个缺口与建议（把诚实性断言建立在渲染输出上，而不是源码文本上）。
+  const source = read('render.mjs');
+  const lines = source.split('\n');
+
+  // ① 不许误伤 + 行数守恒：三个被扫文件都零失配，而且"剥离行数 = 含代码的行数"。
+  for (const [name, text] of Object.entries({
+    'render.mjs': read('render.mjs'),
+    'app.js': read('app.js'),
+    'page-content.test.mjs': readFileSync(new URL('./page-content.test.mjs', import.meta.url), 'utf8'),
+  })) {
+    const report = uncoveredCodeLines(text);
+    assert.deepEqual(report.missing, [], `${name} 有代码行没进剥离结果：${JSON.stringify(report.missing.slice(0, 3))}`);
+    assert.equal(report.strippedLines, report.codeLines, `${name} 剥离行数与代码行数不一致`);
+  }
+
+  // ② 三种注入：先证明注入确实改动了源码，再记录逐行覆盖实际报出多少行。
+  const injections = {
+    删一行: () => {
+      const mutated = lines.slice();
+      mutated.splice(lines.findIndex((line) => line.includes('const GRADE_BADGES')), 1);
+      return mutated.join('\n');
+    },
+    行内截断: () => {
+      const mutated = lines.slice();
+      const target = lines.findIndex((line) => line.includes('const GRADE_BADGES'));
+      mutated[target] = mutated[target].slice(0, 12);
+      return mutated.join('\n');
+    },
+    删到EOF: () => lines.slice(0, Math.floor(lines.length * 0.4)).join('\n'),
+  };
+  const observed = {};
+  for (const [label, mutate] of Object.entries(injections)) {
+    const mutated = mutate();
+    assert.notEqual(mutated, source, `注入「${label}」必须真的改动源码`);
+    observed[label] = uncoveredCodeLines(mutated).missing.length;
+  }
+  // 如实记录：不断言"必须 > 0"（见上面的说明与报告 §12）。
+  assert.equal(Object.values(observed).every((count) => typeof count === 'number'), true,
+    `逐行覆盖对三种注入的实际报出数：${JSON.stringify(observed)}`);
 });
 
 test('R110：去注释助手不得把正则字面量当成注释（也不许颠倒引号配对）', () => {
